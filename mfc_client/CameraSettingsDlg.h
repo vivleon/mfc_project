@@ -37,12 +37,24 @@ public:
 	CString m_selectedTopSerial;
 	CString m_selectedSideSerial;
 
+	// [NEW] Server Settings (Passed from/to Parent)
+	CString m_strServerIP;
+	int m_nUploadPort;
+	int m_nRequestPort;
+
 private:
 	CComboBox m_comboTop;
 	CComboBox m_comboSide;
 	void PopulateComboBoxes();
 	CString GetDeviceString(const Pylon::CDeviceInfo& dev);
+
+	// [NEW] Server Controls
+	CEdit m_editServerIP;
+	CEdit m_editUploadPort;
+	CEdit m_editRequestPort;
+
 public:
 	afx_msg void OnCbnSelchangeCombo1();
+	afx_msg void OnEnChangeEditServerIp();
 };
 

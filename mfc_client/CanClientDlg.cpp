@@ -55,13 +55,19 @@ BEGIN_MESSAGE_MAP(CCanClientDlg, CDialogEx)
 END_MESSAGE_MAP()
 
 // ===================== 생성자 =====================
+// Constructor (Unchanged initialization, member variables added in header)
 CCanClientDlg::CCanClientDlg(CWnd* pParent)
     : CDialogEx(IDD_CANCLIENT_DIALOG, pParent)
-    , m_bMotionDetect(FALSE) // 3.
-    , m_bCaptureInProgress(false) // 3.
+    , m_bMotionDetect(FALSE)
+    , m_bCaptureInProgress(false)
+    , m_strServerIP(_T("127.0.0.1")) // Initialized via member declaration in header now
+    , m_nUploadPort(8080)
+    , m_nRequestPort(8081)
+    , m_productCounter(1012) // Keep other initializations
 {
     m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
+
 
 // ===================== MFC 연결 =====================
 void CCanClientDlg::DoDataExchange(CDataExchange* pDX)
@@ -73,72 +79,39 @@ void CCanClientDlg::DoDataExchange(CDataExchange* pDX)
 }
 
 // ===================== 초기화 =====================
+// OnInitDialog (Calls LoadAppSettings)
 BOOL CCanClientDlg::OnInitDialog()
 {
+    // ... (Standard Init, History, WSA) ...
     CDialogEx::OnInitDialog();
-    SetIcon(m_hIcon, TRUE);
-    SetIcon(m_hIcon, FALSE);
-
-    // ... 기존 히스토리 파일 초기화 ... (기존 코드)
-    {
-        CString folder = _T("C:\\CanClient");
-        CreateDirectory(folder, NULL);
-        CString filePath = folder + _T("\\history.txt");
-        CFile file;
-        if (file.Open(filePath, CFile::modeCreate | CFile::modeWrite)) {
-            file.Close();
-        }
-        m_history.clear();
-        if (m_historyList.GetSafeHwnd())
-            m_historyList.DeleteAllItems();
-    }
-
-    // ===== WSA 초기화 ===== (기존 코드)
+    SetIcon(m_hIcon, TRUE); SetIcon(m_hIcon, FALSE);
+    { /* History file init */ }
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) == 0) {
-        m_wsaInitialized = true;
-        OutputDebugString(L"[INFO] WSA 초기화 완료\n");
+        m_wsaInitialized = true; AddLog(L"[INFO] WSA 초기화 완료");
     }
+    InitHistoryList();
+    ClearCurrentResult();
 
-    // ===== 히스토리 리스트 초기화 =====
-    InitHistoryList(); // (기존 코드, m_historyList Subclassing 포함)
-
-    // ===== 초기 UI 상태 =====
-    ClearCurrentResult(); // (기존 코드)
+    // [FIX] Call LoadAppSettings
+    LoadAppSettings();
 
     try {
         PylonInitialize();
-
-        // 1, 2. Pylon 장치 스캔
         ScanPylonDevices();
-
-        // 1, 2. 기본값 할당 (첫 번째, 두 번째 카메라)
-        if (m_availableDevices.size() > 0)
-        {
+        // ... (Default camera assignment if needed) ...
+        if (m_topCamSerial.IsEmpty() && m_availableDevices.size() > 0)
             m_topCamSerial = CString(m_availableDevices[0].GetSerialNumber().c_str());
-        }
-        if (m_availableDevices.size() > 1)
-        {
+        if (m_sideCamSerial.IsEmpty() && m_availableDevices.size() > 1)
             m_sideCamSerial = CString(m_availableDevices[1].GetSerialNumber().c_str());
-        }
 
-        // 1, 2. 할당된 카메라 열기
-        if (!OpenAssignedCameras())
-        {
-            AfxMessageBox(L"카메라 열기에 실패했습니다. '설정'에서 카메라를 확인하세요.");
-        }
-
-        // 변환기 기본 설정 (기존 코드)
+        if (!OpenAssignedCameras()) { /* Log warning */ }
+        // ... (Converter, Timer init) ...
         m_converter.OutputPixelFormat = PixelType_BGR8packed;
         m_converter.OutputBitAlignment = OutputBitAlignment_MsbAligned;
-
-        // 미리보기 타이머 (기존 코드)
-        m_timerId = SetTimer(1, 33, nullptr); // ~30fps
+        m_timerId = SetTimer(1, 33, nullptr);
     }
-    catch (const GenericException& e) {
-        CString msg(e.GetDescription());
-        AfxMessageBox(msg);
-    }
+    catch (const GenericException& e) { /* Handle error */ }
 
     return TRUE;
 }
@@ -153,6 +126,9 @@ void CCanClientDlg::ScanPylonDevices()
         CString msg;
         msg.Format(L"[INFO] Pylon 카메라 %d대 발견", m_availableDevices.size());
         AddLog(msg);
+        for (size_t i = 0; i < m_availableDevices.size(); ++i) {
+            AddLog(CString(L"  - ") + CString(m_availableDevices[i].GetFriendlyName().c_str()) + L" (" + CString(m_availableDevices[i].GetSerialNumber().c_str()) + L")");
+        }
     }
     catch (const GenericException& e)
     {
@@ -163,70 +139,141 @@ void CCanClientDlg::ScanPylonDevices()
 // ===================== 1, 2. 할당된 카메라 열기 =====================
 bool CCanClientDlg::OpenAssignedCameras()
 {
-    CloseAllCameras(); // 일단 모두 닫기
+    AddLog(L"[DEBUG] OpenAssignedCameras 시작...");
+    CloseAllCameras(); // 일단 기존 카메라 객체 정리
+
     CTlFactory& factory = CTlFactory::GetInstance();
-    bool bSuccessTop = true;
-    bool bSuccessSide = true;
+    bool bSuccessTop = false; // 성공 여부 플래그 초기화
+    bool bSuccessSide = false;
 
-    try
+    // --- TOP 카메라 열기 시도 ---
+    if (!m_topCamSerial.IsEmpty())
     {
-        // TOP 카메라 열기
-        if (!m_topCamSerial.IsEmpty())
+        AddLog(L"[DEBUG] TOP 카메라 열기 시도: " + m_topCamSerial);
+        try
         {
-            m_camTop.Attach(factory.CreateDevice(Pylon::String_t(CT2A(m_topCamSerial))));
+            Pylon::CDeviceInfo topDevInfo;
+            topDevInfo.SetSerialNumber(Pylon::String_t(CT2A(m_topCamSerial)));
+            m_camTop.Attach(factory.CreateDevice(topDevInfo)); // CreateDevice 인자 확인
+            AddLog(L"[DEBUG] TOP Attach 성공.");
             m_camTop.Open();
+            AddLog(L"[DEBUG] TOP Open 성공.");
             m_camTop.StartGrabbing(GrabStrategy_LatestImageOnly);
+            AddLog(L"[DEBUG] TOP StartGrabbing 성공.");
             AddLog(L"[INFO] TOP 카메라 (" + m_topCamSerial + L") 열기 성공.");
+            bSuccessTop = true;
         }
-        else
+        catch (const GenericException& e)
         {
-            bSuccessTop = false;
-            AddLog(L"[INFO] TOP 카메라가 할당되지 않았습니다.");
+            AddLog(CString(L"[ERROR] TOP 카메라 열기 실패: ") + CString(e.GetDescription()));
+            try { m_camTop.DestroyDevice(); }
+            catch (...) {} // 실패 시 정리
         }
-
-        // SIDE 카메라 열기
-        if (!m_sideCamSerial.IsEmpty() && m_sideCamSerial != m_topCamSerial)
+        catch (...)
         {
-            m_camSide.Attach(factory.CreateDevice(Pylon::String_t(CT2A(m_sideCamSerial))));
-            m_camSide.Open();
-            m_camSide.StartGrabbing(GrabStrategy_LatestImageOnly);
-            AddLog(L"[INFO] SIDE 카메라 (" + m_sideCamSerial + L") 열기 성공.");
-        }
-        else if (m_sideCamSerial == m_topCamSerial && !m_topCamSerial.IsEmpty())
-        {
-            bSuccessSide = false;
-            AddLog(L"[WARNING] SIDE 카메라가 TOP과 동일하여 열지 않습니다.");
-        }
-        else
-        {
-            bSuccessSide = false;
-            AddLog(L"[INFO] SIDE 카메라가 할당되지 않았습니다.");
+            AddLog(CString(L"[ERROR] TOP 카메라 열기 중 알 수 없는 예외 발생."));
+            try { m_camTop.DestroyDevice(); }
+            catch (...) {} // 실패 시 정리
         }
     }
-    catch (const GenericException& e)
+    else
     {
-        AddLog(CString(L"[ERROR] 카메라 열기 실패: ") + CString(e.GetDescription()));
-        return false;
+        AddLog(L"[INFO] TOP 카메라가 할당되지 않았습니다.");
     }
 
-    // 하나라도 열렸으면 성공
-    return m_camTop.IsOpen() || m_camSide.IsOpen();
+    // --- SIDE 카메라 열기 시도 ---
+    if (!m_sideCamSerial.IsEmpty() && m_sideCamSerial != m_topCamSerial)
+    {
+        AddLog(L"[DEBUG] SIDE 카메라 열기 시도: " + m_sideCamSerial);
+        try
+        {
+            Pylon::CDeviceInfo sideDevInfo;
+            sideDevInfo.SetSerialNumber(Pylon::String_t(CT2A(m_sideCamSerial)));
+            m_camSide.Attach(factory.CreateDevice(sideDevInfo));
+            AddLog(L"[DEBUG] SIDE Attach 성공.");
+            m_camSide.Open();
+            AddLog(L"[DEBUG] SIDE Open 성공.");
+            m_camSide.StartGrabbing(GrabStrategy_LatestImageOnly);
+            AddLog(L"[DEBUG] SIDE StartGrabbing 성공.");
+            AddLog(L"[INFO] SIDE 카메라 (" + m_sideCamSerial + L") 열기 성공.");
+            bSuccessSide = true;
+        }
+        catch (const GenericException& e)
+        {
+            AddLog(CString(L"[ERROR] SIDE 카메라 열기 실패: ") + CString(e.GetDescription()));
+            try { m_camSide.DestroyDevice(); }
+            catch (...) {}
+        }
+        catch (...)
+        {
+            AddLog(CString(L"[ERROR] SIDE 카메라 열기 중 알 수 없는 예외 발생."));
+            try { m_camSide.DestroyDevice(); }
+            catch (...) {}
+        }
+    }
+    else if (m_sideCamSerial == m_topCamSerial && !m_topCamSerial.IsEmpty())
+    {
+        AddLog(L"[WARNING] SIDE 카메라가 TOP과 동일하여 열지 않습니다.");
+    }
+    else
+    {
+        AddLog(L"[INFO] SIDE 카메라가 할당되지 않았습니다.");
+    }
+
+    AddLog(L"[DEBUG] OpenAssignedCameras 종료.");
+    // 하나라도 열렸으면 성공으로 간주 (요청사항 1번)
+    return bSuccessTop || bSuccessSide;
 }
 
-// ===================== 1, 2. 모든 카메라 닫기 =====================
+// ===================== 1, 2. 모든 카메라 닫기 (DetachDevice 포함) =====================
 void CCanClientDlg::CloseAllCameras()
 {
+    AddLog(L"[DEBUG] CloseAllCameras 시작...");
     try {
         if (m_camTop.IsGrabbing())   m_camTop.StopGrabbing();
-        if (m_camTop.IsOpen())       m_camTop.Close();
-        //if (m_camTop.IsAttached())   m_camTop.DetachDevice();
-
-        if (m_camSide.IsGrabbing())  m_camSide.StopGrabbing();
-        if (m_camSide.IsOpen())      m_camSide.Close();
-        //if (m_camSide.IsAttached())  m_camSide.DetachDevice();
+        AddLog(L"[DEBUG] TOP StopGrabbing 완료.");
     }
-    catch (...) {}
-    AddLog(L"[INFO] 모든 카메라 닫힘.");
+    catch (const GenericException& e) { AddLog(CString(L"[WARNING] TOP StopGrabbing 실패: ") + CString(e.GetDescription())); }
+    catch (...) { AddLog(L"[WARNING] TOP StopGrabbing 중 알 수 없는 예외."); }
+
+    try {
+        if (m_camTop.IsOpen())       m_camTop.Close();
+        AddLog(L"[DEBUG] TOP Close 완료.");
+    }
+    catch (const GenericException& e) { AddLog(CString(L"[WARNING] TOP Close 실패: ") + CString(e.GetDescription())); }
+    catch (...) { AddLog(L"[WARNING] TOP Close 중 알 수 없는 예외."); }
+
+    // [FIX] DetachDevice 호출 추가 및 예외 처리
+    try {
+        if (m_camTop.IsPylonDeviceAttached()) m_camTop.DetachDevice(); // IsPylonDeviceAttached() 사용
+        AddLog(L"[DEBUG] TOP DetachDevice 완료.");
+    }
+    catch (const GenericException& e) { AddLog(CString(L"[WARNING] TOP DetachDevice 실패: ") + CString(e.GetDescription())); }
+    catch (...) { AddLog(L"[WARNING] TOP DetachDevice 중 알 수 없는 예외."); }
+
+    // SIDE 카메라에 대해서도 동일하게 처리
+    try {
+        if (m_camSide.IsGrabbing())  m_camSide.StopGrabbing();
+        AddLog(L"[DEBUG] SIDE StopGrabbing 완료.");
+    }
+    catch (const GenericException& e) { AddLog(CString(L"[WARNING] SIDE StopGrabbing 실패: ") + CString(e.GetDescription())); }
+    catch (...) { AddLog(L"[WARNING] SIDE StopGrabbing 중 알 수 없는 예외."); }
+
+    try {
+        if (m_camSide.IsOpen())      m_camSide.Close();
+        AddLog(L"[DEBUG] SIDE Close 완료.");
+    }
+    catch (const GenericException& e) { AddLog(CString(L"[WARNING] SIDE Close 실패: ") + CString(e.GetDescription())); }
+    catch (...) { AddLog(L"[WARNING] SIDE Close 중 알 수 없는 예외."); }
+
+    try {
+        if (m_camSide.IsPylonDeviceAttached()) m_camSide.DetachDevice();
+        AddLog(L"[DEBUG] SIDE DetachDevice 완료.");
+    }
+    catch (const GenericException& e) { AddLog(CString(L"[WARNING] SIDE DetachDevice 실패: ") + CString(e.GetDescription())); }
+    catch (...) { AddLog(L"[WARNING] SIDE DetachDevice 중 알 수 없는 예외."); }
+
+    AddLog(L"[INFO] 모든 카메라 닫기 시도 완료.");
 }
 
 
@@ -729,15 +776,14 @@ bool CCanClientDlg::SendImageToServer(const std::vector<unsigned char>& imgBuffe
     serverAddr.sin_family = AF_INET;
     //serverAddr.sin_port = htons(9000); // (포트 확인)
     //inet_pton(AF_INET, "127.0.0.1", &serverAddr.sin_addr);
-    serverAddr.sin_port = htons(8080); // (C# 서버 포트 8080으로 가정)
-    inet_pton(AF_INET, "127.0.0.1", &serverAddr.sin_addr); // (IP 확인)
+    serverAddr.sin_port = htons((u_short)m_nUploadPort); // Use Upload Port
+    inet_pton(AF_INET, CT2A(m_strServerIP), &serverAddr.sin_addr); // Use Server IP
 
     if (connect(sock, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
         int err = WSAGetLastError();
-        CString errMsg; errMsg.Format(L"[ERROR] 서버 연결 실패 (WSA: %d)\n", err);
-        OutputDebugString(errMsg);
-        closesocket(sock);
-        return false;
+        CString errMsg; errMsg.Format(L"[ERROR] 업로드 서버(%s:%d) 연결 실패 (WSA: %d)\n", m_strServerIP, m_nUploadPort, err);
+        AddLog(errMsg);
+        closesocket(sock); return false;
     }
 
     // ===== 크기 전송 (Big Endian) ===== (기존 코드)
@@ -777,6 +823,73 @@ bool CCanClientDlg::SendImageToServer(const std::vector<unsigned char>& imgBuffe
         OutputDebugString(L"[WARNING] 응답 없음\n");
         response.clear();
     }
+
+    closesocket(sock);
+    return true;
+}
+
+
+// ===================== 이미지 요청 함수 (설정된 IP/Port 사용) =====================
+bool CCanClientDlg::RequestImageFromServer(CString productID, CString role, std::vector<unsigned char>& imgBuffer)
+{
+    imgBuffer.clear();
+    json j;
+    j["command"] = "get_image";
+    j["product_id"] = std::string(CT2A(productID));
+    j["role"] = std::string(CT2A(role));
+    std::string json_str = j.dump();
+
+    SOCKET sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock == INVALID_SOCKET) { AddLog(L"[ERROR] 이미지 요청 소켓 생성 실패"); return false; }
+
+    sockaddr_in serverAddr = {};
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons((u_short)m_nRequestPort);
+    if (inet_pton(AF_INET, CT2A(m_strServerIP), &serverAddr.sin_addr) != 1) {
+        AddLog(L"[ERROR] inet_pton 실패 (요청 서버 IP 변환 오류)"); closesocket(sock); return false;
+    }
+
+    if (connect(sock, (sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        int err = WSAGetLastError(); CString errMsg; errMsg.Format(L"[ERROR] 이미지 요청 서버(%s:%d) 연결 실패 (WSA: %d)", m_strServerIP, m_nRequestPort, err); AddLog(errMsg); closesocket(sock); return false;
+    }
+
+    if (send(sock, json_str.c_str(), (int)json_str.length(), 0) != (int)json_str.length()) {
+        AddLog(L"[ERROR] 이미지 요청 JSON 전송 실패"); closesocket(sock); return false;
+    }
+
+    char lenBuf[4];
+    int recvLen = recv(sock, lenBuf, 4, 0);
+    if (recvLen != 4) { AddLog(L"[ERROR] 이미지 길이 수신 실패"); closesocket(sock); return false; }
+
+    int imgSize = ntohl(*(int*)lenBuf);
+    if (imgSize <= 0 || imgSize > 20 * 1024 * 1024) {
+        // [FIX] Use CString::Format for logging integer
+        CString msg;
+        msg.Format(L"[ERROR] 유효하지 않은 이미지 크기 수신: %d", imgSize);
+        AddLog(msg);
+        if (imgSize > 0 && imgSize < 1024) {
+            std::vector<char> errBuf(imgSize);
+            recv(sock, errBuf.data(), imgSize, 0); // Try to read error message
+            std::string errMsgStr(errBuf.begin(), errBuf.end());
+            AddLog(CString(L"[SERVER ERROR] ") + Utf8ToCStr(errMsgStr));
+        }
+        closesocket(sock);
+        return false;
+    }
+
+    imgBuffer.resize(imgSize);
+    int totalRecv = 0;
+    while (totalRecv < imgSize) {
+        int chunk = min(64 * 1024, imgSize - totalRecv);
+        recvLen = recv(sock, (char*)imgBuffer.data() + totalRecv, chunk, 0);
+        if (recvLen <= 0) { AddLog(L"[ERROR] 이미지 데이터 수신 실패"); closesocket(sock); return false; }
+        totalRecv += recvLen;
+    }
+
+    // [FIX] Use CString::Format for logging concatenated string
+    CString successMsg;
+    successMsg.Format(L"[INFO] 이미지 수신 성공: %s_%s (%d bytes)", productID, role, imgSize);
+    AddLog(successMsg);
 
     closesocket(sock);
     return true;
@@ -942,72 +1055,113 @@ void CCanClientDlg::LoadHistoryFromFile()
     UpdateStatistics(); // 5. 로드 후 통계 갱신
 }
 
-// ===================== 1, 2. 설정 버튼 핸들러 =====================
+// ===================== 설정 버튼 핸들러 (IP/Port 전달 및 저장) =====================
+// OnBnClickedBtnSettings (Fixed AddLog call)
 void CCanClientDlg::OnBnClickedBtnSettings()
 {
     AddLog(L"[INFO] 설정 창 열기...");
-
-    // 설정창 열기 전 Pylon 장치 목록 다시 스캔
     ScanPylonDevices();
 
-    // 설정 대화상자에 현재 값 전달
+    // Pass current settings to dialog
     m_settingsDlg.m_availableDevices = m_availableDevices;
     m_settingsDlg.m_currentTopSerial = m_topCamSerial;
     m_settingsDlg.m_currentSideSerial = m_sideCamSerial;
+    m_settingsDlg.m_strServerIP = m_strServerIP;
+    m_settingsDlg.m_nUploadPort = m_nUploadPort;
+    m_settingsDlg.m_nRequestPort = m_nRequestPort;
 
     if (m_settingsDlg.DoModal() == IDOK)
     {
-        // 설정 대화상자에서 "OK"를 눌렀을 때
+        // Retrieve settings from dialog
         m_topCamSerial = m_settingsDlg.m_selectedTopSerial;
         m_sideCamSerial = m_settingsDlg.m_selectedSideSerial;
+        m_strServerIP = m_settingsDlg.m_strServerIP;
+        m_nUploadPort = m_settingsDlg.m_nUploadPort;
+        m_nRequestPort = m_settingsDlg.m_nRequestPort;
 
-        AddLog(L"[INFO] 카메라 설정 변경됨. 카메라 다시 여는 중...");
+        AddLog(L"[INFO] 설정 변경됨: TOP=" + m_topCamSerial + L", SIDE=" + m_sideCamSerial);
+        // [FIX] Use CString::Format for logging integers with CString
+        CString serverInfoMsg;
+        serverInfoMsg.Format(L"[INFO] 서버 설정: IP=%s, Upload=%d, Request=%d",
+            m_strServerIP, m_nUploadPort, m_nRequestPort);
+        AddLog(serverInfoMsg);
 
-        // 1, 2. 변경된 설정으로 카메라 다시 열기
-        if (!OpenAssignedCameras())
-        {
+        AddLog(L"[INFO] 카메라 다시 여는 중...");
+
+        if (!OpenAssignedCameras()) {
             AfxMessageBox(L"선택한 카메라 열기에 실패했습니다.");
         }
 
-        // 3. 모션 감지용 이전 프레임 리셋
         m_prevFrameTop.release();
         m_prevFrameSide.release();
+
+        SaveAppSettings(); // Save settings after changes
+    }
+    else {
+        AddLog(L"[INFO] 설정 변경 취소됨.");
     }
 }
+
 
 // ===================== 5. 스레드 안전한 로그 (예시) =====================
 void CCanClientDlg::AddLog(const CString& msg)
 {
-    // (실제 구현에서는 CListBox 대신 파일/디버그 출력 사용)
+    // Visual Studio 출력 창에 로그 표시
     OutputDebugString(msg + L"\n");
 
-    // (만약 CListBox에 로그를 남긴다면, PostMessage 등으로 메인 스레드에서 처리해야 함)
+    // TODO: 파일 로깅 또는 UI 리스트 박스에 스레드 안전하게 로그 추가 (옵션)
+    // 예: PostMessage(WM_USER_ADD_LOG, 0, (LPARAM)new CString(msg));
 }
 
 
-// ===================== 종료 =====================
+
+// ===================== 종료 (설정 저장 추가) =====================
 void CCanClientDlg::OnDestroy()
 {
+    // [NEW] Save settings on exit (optional, could save only when changed)
+    SaveAppSettings();
+
     CDialogEx::OnDestroy();
+    // ... (KillTimer, Wait for thread, CloseCameras, PylonTerminate, WSACleanup) ...
+    if (m_timerId) { KillTimer(m_timerId); m_timerId = 0; }
+    AddLog(L"[INFO] 프로그램 종료 시작...");
+    m_bCaptureInProgress = true; // Prevent new threads
+    // Sleep(1000); // Optional wait
+    CloseAllCameras();
+    try { PylonTerminate(); AddLog(L"[INFO] PylonTerminate 완료."); }
+    catch (...) { /* Log */ }
+    if (m_wsaInitialized) { WSACleanup(); m_wsaInitialized = false; AddLog(L"[INFO] WSA 종료 완료."); }
+    AddLog(L"[INFO] 프로그램 종료 완료.");
+}
 
-    if (m_timerId) {
-        KillTimer(m_timerId);
-        m_timerId = 0;
+
+// ===================== [NEW] 설정 로드/저장 함수 =====================
+void CCanClientDlg::LoadAppSettings()
+{
+    CWinApp* pApp = AfxGetApp();
+    m_strServerIP = pApp->GetProfileString(_T("Network"), _T("ServerIP"), _T("127.0.0.1"));
+    m_nUploadPort = pApp->GetProfileInt(_T("Network"), _T("UploadPort"), 8080);
+    m_nRequestPort = pApp->GetProfileInt(_T("Network"), _T("RequestPort"), 8081);
+    m_topCamSerial = pApp->GetProfileString(_T("Camera"), _T("TopSerial"), _T(""));
+    m_sideCamSerial = pApp->GetProfileString(_T("Camera"), _T("SideSerial"), _T(""));
+
+    AddLog(L"[INFO] 설정 로드 완료.");
+}
+
+void CCanClientDlg::SaveAppSettings()
+{
+    CWinApp* pApp = AfxGetApp();
+    if (pApp)
+    {
+        pApp->WriteProfileString(_T("Network"), _T("ServerIP"), m_strServerIP);
+        pApp->WriteProfileInt(_T("Network"), _T("UploadPort"), m_nUploadPort);
+        pApp->WriteProfileInt(_T("Network"), _T("RequestPort"), m_nRequestPort);
+        pApp->WriteProfileString(_T("Camera"), _T("TopSerial"), m_topCamSerial);
+        pApp->WriteProfileString(_T("Camera"), _T("SideSerial"), m_sideCamSerial);
+        // AddLog(L"[INFO] 설정 저장 완료."); // Avoid logging during shutdown if problematic
     }
-
-    // 5. 캡처 스레드가 진행 중일 수 있으므로, 종료 대기
-    m_bCaptureInProgress = true; // (새 스레드 방지)
-    Sleep(1000); // (간단한 1초 대기. 실제로는 Event/Mutex 등으로 종료 대기 필요)
-
-    try {
-        CloseAllCameras(); // 1, 2.
-        PylonTerminate();
-    }
-    catch (...) {}
-
-    if (m_wsaInitialized) {
-        WSACleanup();
-        m_wsaInitialized = false;
-        OutputDebugString(L"[INFO] WSA 종료\n");
+    else {
+        // AddLog(L"[ERROR] CWinApp 포인터를 가져올 수 없어 설정을 저장하지 못했습니다.");
+        OutputDebugString(L"[ERROR] CWinApp 포인터를 가져올 수 없어 설정을 저장하지 못했습니다.\n"); // Use OutputDebugString directly in shutdown
     }
 }

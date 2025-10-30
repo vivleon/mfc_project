@@ -248,6 +248,7 @@ xcopy /y /d "C:\opencv\build\x64\vc16\bin\opencv_videoio_ffmpeg4120_64.dll" "$(O
     <ClInclude Include="CameraSettingsDlg.h" />
     <ClInclude Include="CanClient.h" />
     <ClInclude Include="CanClientDlg.h" />
+    <ClInclude Include="PreviewDlg.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Resource.h" />
@@ -257,6 +258,7 @@ xcopy /y /d "C:\opencv\build\x64\vc16\bin\opencv_videoio_ffmpeg4120_64.dll" "$(O
     <ClCompile Include="CameraSettingsDlg.cpp" />
     <ClCompile Include="CanClient.cpp" />
     <ClCompile Include="CanClientDlg.cpp" />
+    <ClCompile Include="PreviewDlg.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>

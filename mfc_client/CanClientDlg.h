@@ -44,79 +44,69 @@ protected:
     afx_msg void OnDestroy();
     afx_msg void OnBnClickedBtnStart();
     afx_msg void OnTimer(UINT_PTR nIDEvent);
-    afx_msg void OnBnClickedBtnSettings(); // 1, 2. 설정 버튼 핸들러
+    afx_msg void OnBnClickedBtnSettings();
+    afx_msg LRESULT OnCaptureComplete(WPARAM wParam, LPARAM lParam); // [FIX] Removed duplicate declaration
+    afx_msg void OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult);
     DECLARE_MESSAGE_MAP()
 
 private:
     HICON m_hIcon;
 
-    // ===== 1, 2. 카메라 (Pylon) =====
-    Pylon::DeviceInfoList_t m_availableDevices; // 사용 가능한 모든 장치
-    CString m_topCamSerial;    // "TOP" 역할에 할당된 시리얼
-    CString m_sideCamSerial;   // "SIDE" 역할에 할당된 시리얼
-    CCameraSettingsDlg m_settingsDlg; // 설정 대화상자 인스턴스
-
+    // Camera Members (Unchanged)
+    Pylon::DeviceInfoList_t m_availableDevices;
+    CString m_topCamSerial;
+    CString m_sideCamSerial;
+    CCameraSettingsDlg m_settingsDlg;
     CInstantCamera        m_camTop;
-    CInstantCamera        m_camSide; // m_camFront -> m_camSide (명칭 변경)
-    CImageFormatConverter m_converter;   // BGR8 변환용
-    CPylonImage           m_pylonImage;  // 미리보기/캡처 공용 버퍼
+    CInstantCamera        m_camSide;
+    CImageFormatConverter m_converter;
+    CPylonImage           m_pylonImage;
     UINT_PTR              m_timerId = 0;
 
-    // ===== 3. 모션 감지 =====
+    // Motion Detection Members (Unchanged)
     CButton m_checkMotionDetect;
     BOOL    m_bMotionDetect;
-    cv::Mat m_prevFrameTop;  // 모션 감지용 이전 프레임
+    cv::Mat m_prevFrameTop;
     cv::Mat m_prevFrameSide;
-    bool    m_bCaptureInProgress; // 캡처 스레드 중복 실행 방지 플래그
-    bool DetectMotion(cv::Mat& currentFrame, CString role); // 모션 감지 함수
+    bool    m_bCaptureInProgress;
+    bool DetectMotion(cv::Mat& currentFrame, CString role);
     void ConvertPylonBufferToMat(CPylonImage& pylonImg, CGrabResultPtr& grabResult, cv::Mat& outMat);
 
-    // ===== 5. 비동기 캡처 =====
-    static UINT CaptureWorkThread(LPVOID pParam); // 5. 캡처/전송 스레드
-    void TriggerCapture(bool bUseTop, bool bUseSide); // 스레드 시작 함수
-    void ProcessCapture(bool bUseTop, bool bUseSide); // 스레드 실제 작업 함수
-
-    // ===== 네트워크 =====
+    // Thread, Network, UI, Data Members
+    static UINT CaptureWorkThread(LPVOID pParam);
+    void TriggerCapture(bool bUseTop, bool bUseSide);
+    void ProcessCapture(bool bUseTop, bool bUseSide);
     bool m_wsaInitialized = false;
-
-    // ===== UI 컨트롤 =====
     CListCtrl m_historyList;
-
-    // ===== 데이터 =====
     std::vector<InspectionResult> m_history;
-    int m_productCounter = 1012; // CK1012부터 시작
+    int m_productCounter = 1012;
 
-    // ===== 헬퍼 함수 =====
+    // [NEW] Server IP and Port Members
+    CString m_strServerIP;
+    int m_nUploadPort;
+    int m_nRequestPort;
+
+    // Helper Functions
     void DrawImageBufferToCtrl(const uint8_t* data, int width, int height, CWnd* pWnd);
     void ClearPictureControl(CWnd* pWnd);
-
-    // 5. 네트워크 (메모리 버퍼 전송)
     bool SendImageToServer(const std::vector<unsigned char>& imgBuffer, CString role, std::string& response);
-
-    // UI 업데이트
+    bool RequestImageFromServer(CString productID, CString role, std::vector<unsigned char>& imgBuffer);
     void InitHistoryList();
     void UpdateCurrentResult(const InspectionResult& result);
     void AddToHistory(const InspectionResult& result);
     void ClearCurrentResult();
     void UpdateStatistics();
-
-    // 히스토리 관리
     void LoadHistoryFromFile();
     void SaveHistoryToFile();
-
-    // 유틸리티
     CString GenerateProductId();
     CString GetCurrentTimestamp();
-
-    // JSON 파싱 (기존 함수 재사용)
     bool ParseJsonResponse(const std::string& json, InspectionResult& result);
-
-    // 1, 2. 카메라 스캔/연결
     void ScanPylonDevices();
     bool OpenAssignedCameras();
     void CloseAllCameras();
+    void AddLog(const CString& msg);
 
-    // 5. 스레드 안전한 UI 업데이트
-    void AddLog(const CString& msg); // 디버그/상태 로깅용
-    afx_msg LRESULT OnCaptureComplete(WPARAM wParam, LPARAM lParam); // 캡처 완료 메시지
+    // [NEW] Settings Load/Save Function Declarations
+    void LoadAppSettings();
+    void SaveAppSettings();
 };
