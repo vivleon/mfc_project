@@ -144,7 +144,10 @@ void CCameraSettingsDlg::ShowTabControls(int nTab)
 	BOOL bShowBasic = (nTab == 0);
 	GetDlgItem(IDC_STATIC_TOP_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 	GetDlgItem(IDC_COMBO_TOP)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
-	GetDlgItem(IDC_STATIC_SIDE_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE); 
+
+	// [FIX] resource.h에 정의된 ID (1038) 사용
+	GetDlgItem(IDC_STATIC_SIDE_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
+
 	GetDlgItem(IDC_COMBO_SIDE)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 	GetDlgItem(IDC_STATIC_SERVER_IP)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 	GetDlgItem(IDC_EDIT_SERVER_IP)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
@@ -159,10 +162,16 @@ void CCameraSettingsDlg::ShowTabControls(int nTab)
 	GetDlgItem(IDC_STATIC_FPS)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_sliderFps.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_editFps.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
+
+	// [FIX] IDD_CAMERA_SETTINGS 리소스의 ID와 일치시킴
 	GetDlgItem(IDC_STATIC_EXPOSURE)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
+
 	m_sliderExposure.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_editExposure.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
+
+	// [FIX] IDD_CAMERA_SETTINGS 리소스의 ID와 일치시킴
 	GetDlgItem(IDC_STATIC_GAIN)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
+
 	m_sliderGain.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_editGain.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_staticTargetCam.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);

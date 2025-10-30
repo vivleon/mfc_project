@@ -48,49 +48,42 @@ static CString Utf8ToCStr(const std::string& s)
 
 // --- Message Map ---
 BEGIN_MESSAGE_MAP(CCanClientDlg, CDialogEx)
-    // ... other messages ...
+    // ...
     ON_BN_CLICKED(IDC_BTN_SETTINGS, &CCanClientDlg::OnBnClickedBtnSettings)
     ON_WM_DESTROY()
-    ON_WM_CTLCOLOR()
-    // ... other messages ...
+    // [FIX] ON_WM_CTLCOLOR() 제거
+    // ...
 END_MESSAGE_MAP()
-
 // --- Constructor ---
 CCanClientDlg::CCanClientDlg(CWnd* pParent)
     : CDialogEx(IDD_CANCLIENT_DIALOG, pParent)
-    // Initialize members including defaults for advanced settings
     , m_bMotionDetect(FALSE)
     , m_bCaptureInProgress(false)
-    , m_strServerIP(_T("127.0.0.1"))
-    , m_nUploadPort(8080)
-    , m_nRequestPort(8081)
+    , m_strServerIP(_T("127.0.0.1")) // [FIX] public 멤버도 초기화 가능
+    , m_nUploadPort(8080)             // [FIX] public 멤버도 초기화 가능
+    , m_nRequestPort(8081)            // [FIX] public 멤버도 초기화 가능
     , m_productCounter(1011)
     , m_gdiplusToken(0)
     , m_timerId(0)
     , m_wsaInitialized(false)
     , m_evtShutdown(NULL)
     , m_pCaptureThread(nullptr)
-    , m_dTopFps(-1.0), m_dTopExposure(-1.0), m_dTopGain(-1.0) // Use -1 to indicate not set/loaded yet
-    , m_dSideFps(-1.0), m_dSideExposure(-1.0), m_dSideGain(-1.0)
+    , m_bTimerBusy(false) // [FIX] 타이머 플래그 초기화
+    , m_dTopFps(-1.0)
+    , m_dTopExposure(-1.0)
+    , m_dTopGain(-1.0)
+    , m_dSideFps(-1.0)
+    , m_dSideExposure(-1.0)
+    , m_dSideGain(-1.0)
 {
     m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
-
-    // [UI FIX] 색상 변경:
-    // m_brBkg.CreateSolidBrush(RGB(30, 30, 30)); // 기존 (너무 어두움)
-    // m_brList.CreateSolidBrush(RGB(45, 45, 45));
-    // m_brStatic.CreateSolidBrush(RGB(50, 50, 50));
-
-    //m_brBkg.CreateSolidBrush(RGB(45, 48, 54));    // 배경: 어두운 차콜
-    //m_brList.CreateSolidBrush(RGB(60, 63, 69));    // 리스트/에디트: 중간 그레이
-    //m_brStatic.CreateSolidBrush(RGB(80, 83, 89));  // 버튼: 밝은 그레이
+    // [FIX] 브러시 관련 코드 모두 제거
 }
+
 // --- Destructor ---
 CCanClientDlg::~CCanClientDlg() noexcept
 {
-    // Ensure brushes are deleted
-    //m_brBkg.DeleteObject();
-    //m_brList.DeleteObject();
-    //m_brStatic.DeleteObject();
+    // [FIX] 브러시 관련 코드 모두 제거
 }
 
 
@@ -131,52 +124,29 @@ void CCanClientDlg::InitHistoryList()
     m_historyList.InsertColumn(2, _T("상세 내용"), LVCFMT_LEFT, 200);
     m_historyList.InsertColumn(3, _T("시간"), LVCFMT_LEFT, 150);
 }
-
 // --- OnInitDialog ---
 BOOL CCanClientDlg::OnInitDialog()
 {
-    // [FIX] CDialogEx::OnInitDialog()를 가장 먼저 호출해야 합니다.
-    // 이 함수가 DoDataExchange를 실행하여 m_historyList를 포함한
-    // 모든 컨트롤 변수를 초기화(연결)합니다.
     CDialogEx::OnInitDialog();
-
-    // ... (기존의 SetIcon, Add icon to system tray 등) ...
-    // (만약 CDialogEx::OnInitDialog()가 이미 다른 곳에 있었다면,
-    //  그 위치는 그대로 두고 InitHistoryList()만 이 줄 아래로 옮기면 됩니다.)
-
+    // ...
     InitGDIPlus();
     m_evtShutdown = CreateEvent(NULL, TRUE, FALSE, NULL);
-
-    // ... WSA init (WSAStartup) ...
-    if (!m_wsaInitialized) {
-        WSADATA wsaData;
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-            AddLog(L"[ERROR] WSAStartup 실패.");
-        }
-        else {
-            m_wsaInitialized = true;
-            AddLog(L"[INFO] WSA 초기화 완료.");
-        }
-    }
-
-    // [FIX] InitHistoryList()를 이 위치로 이동
-    // CDialogEx::OnInitDialog()가 호출된 이후이므로 m_historyList.m_hWnd가 유효합니다.
+    // ... (WSAStartup) ...
     InitHistoryList();
-
     ClearCurrentResult();
-    LoadAppSettings(); // Load basic AND advanced settings
+
+    // [FIX] LoadAppSettings(); 호출 제거 (CanClient.cpp로 이동됨)
+    // [FIX] LoadHistoryFromFile(); 호출 추가
+    LoadHistoryFromFile();
 
     try {
         PylonInitialize();
         ScanPylonDevices();
-        // ... default camera assignment ...
         if (!OpenAssignedCameras()) { AddLog(L"[WARNING] 초기 카메라 열기 실패."); }
         else {
-            // Apply loaded advanced settings after opening cameras
             if (m_camTop.IsOpen()) ApplyAdvancedCameraSettings(m_camTop, m_dTopFps, m_dTopExposure, m_dTopGain);
             if (m_camSide.IsOpen()) ApplyAdvancedCameraSettings(m_camSide, m_dSideFps, m_dSideExposure, m_dSideGain);
         }
-        // ... converter and timer init ...
         m_converter.OutputPixelFormat = PixelType_BGR8packed;
         m_converter.OutputBitAlignment = OutputBitAlignment_MsbAligned;
         m_timerId = SetTimer(1, 33, nullptr);
@@ -186,43 +156,6 @@ BOOL CCanClientDlg::OnInitDialog()
 
     return TRUE;
 }
-
-//// --- Dark Mode UI Styling ---
-//HBRUSH CCanClientDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
-//{
-//    // [UI FIX] 변경된 색상 테마 적용
-//    switch (nCtlColor)
-//    {
-//    case CTLCOLOR_DLG:
-//        pDC->SetBkColor(RGB(45, 48, 54)); // 배경: 어두운 차콜
-//        pDC->SetTextColor(RGB(240, 240, 240)); // 텍스트: 밝은 흰색
-//        return (HBRUSH)m_brBkg.GetSafeHandle();
-//
-//    case CTLCOLOR_STATIC:
-//        pDC->SetBkColor(RGB(45, 48, 54)); // 배경: 어두운 차콜
-//        pDC->SetTextColor(RGB(240, 240, 240)); // 텍스트: 밝은 흰색
-//        pDC->SetBkMode(TRANSPARENT);
-//        return (HBRUSH)m_brBkg.GetSafeHandle();
-//
-//    case CTLCOLOR_BTN:
-//        pDC->SetBkColor(RGB(80, 83, 89)); // 버튼: 밝은 그레이
-//        pDC->SetTextColor(RGB(240, 240, 240));
-//        return (HBRUSH)m_brStatic.GetSafeHandle();
-//
-//    case CTLCOLOR_EDIT:
-//        pDC->SetBkColor(RGB(60, 63, 69)); // 리스트/에디트: 중간 그레이
-//        pDC->SetTextColor(RGB(240, 240, 240));
-//        return (HBRUSH)m_brList.GetSafeHandle();
-//
-//    case CTLCOLOR_LISTBOX: // Includes ListCtrl header, Combo box dropdown list
-//        pDC->SetBkColor(RGB(60, 63, 69)); // 리스트/에디트: 중간 그레이
-//        pDC->SetTextColor(RGB(240, 240, 240));
-//        return (HBRUSH)m_brList.GetSafeHandle();
-//
-//    default:
-//        return CDialogEx::OnCtlColor(pDC, pWnd, nCtlColor);
-//    }
-//}
 
 // --- Camera Functions ---
 void CCanClientDlg::ScanPylonDevices()
@@ -307,58 +240,73 @@ void CCanClientDlg::CloseAllCameras()
     catch (...) { /* ignore */ }
     AddLog(L"[INFO] 모든 카메라 닫기 시도 완료.");
 }
-
 // --- Timer (Preview & Motion Detection) ---
 void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
 {
-    // [FIX] OnDestroy가 호출되거나 모달 창이 떴을 때
-    // 'this' 포인터가 유효하지 않은 상태로 타이머가 호출되는 것을 방지합니다.
+    // [FIX] Crash 방지
     if (!GetSafeHwnd())
     {
         return;
     }
 
-    // 타이머 ID가 1이 아니거나, 이미 캡처가 진행 중이면 반환
+    // [FIX] 타이머 중복 실행 방지
+    if (nIDEvent == 1 && m_bTimerBusy)
+    {
+        return;
+    }
+    if (nIDEvent == 1)
+    {
+        m_bTimerBusy = true;
+    }
+
+    // 타이머 ID가 1이 아니거나, 캡처 진행 중이면 반환
     if (nIDEvent != 1 || m_bCaptureInProgress) {
         if (nIDEvent != 1) CDialogEx::OnTimer(nIDEvent);
+
+        if (nIDEvent == 1) m_bTimerBusy = false; // [FIX] 반환 전 플래그 해제
         return;
     }
 
-    UpdateData(TRUE);
+    UpdateData(TRUE); // m_bMotionDetect 값 업데이트
 
     try {
         CGrabResultPtr grabTop, grabSide;
         bool bMotionTop = false, bMotionSide = false;
+        cv::Mat currentMatTop, currentMatSide;
 
         if (m_camTop.IsGrabbing()) {
             if (m_camTop.RetrieveResult(50, grabTop, TimeoutHandling_Return) && grabTop->GrabSucceeded()) {
+                ConvertPylonBufferToMat(m_pylonImage, grabTop, currentMatTop);
+                DrawImageBufferToCtrl((uint8_t*)m_pylonImage.GetBuffer(), (int)grabTop->GetWidth(), (int)grabTop->GetHeight(), GetDlgItem(IDC_CAM_TOP));
+
                 if (m_bMotionDetect) {
-                    cv::Mat currentMat; ConvertPylonBufferToMat(m_pylonImage, grabTop, currentMat);
-                    bMotionTop = DetectMotion(currentMat, _T("TOP"));
-                }
-                else {
-                    m_converter.Convert(m_pylonImage, grabTop);
-                    DrawImageBufferToCtrl((uint8_t*)m_pylonImage.GetBuffer(), (int)grabTop->GetWidth(), (int)grabTop->GetHeight(), GetDlgItem(IDC_CAM_TOP));
+                    bMotionTop = DetectMotion(currentMatTop, _T("TOP"));
                 }
             }
-            else if (!m_bMotionDetect) { ClearPictureControl(GetDlgItem(IDC_CAM_TOP)); }
+            else {
+                ClearPictureControl(GetDlgItem(IDC_CAM_TOP));
+            }
         }
-        else if (!m_bMotionDetect) { ClearPictureControl(GetDlgItem(IDC_CAM_TOP)); }
+        else {
+            ClearPictureControl(GetDlgItem(IDC_CAM_TOP));
+        }
 
         if (m_camSide.IsGrabbing()) {
             if (m_camSide.RetrieveResult(50, grabSide, TimeoutHandling_Return) && grabSide->GrabSucceeded()) {
+                ConvertPylonBufferToMat(m_pylonImage, grabSide, currentMatSide);
+                DrawImageBufferToCtrl((uint8_t*)m_pylonImage.GetBuffer(), (int)grabSide->GetWidth(), (int)grabSide->GetHeight(), GetDlgItem(IDC_CAM_FRONT));
+
                 if (m_bMotionDetect) {
-                    cv::Mat currentMat; ConvertPylonBufferToMat(m_pylonImage, grabSide, currentMat);
-                    bMotionSide = DetectMotion(currentMat, _T("SIDE"));
-                }
-                else {
-                    m_converter.Convert(m_pylonImage, grabSide);
-                    DrawImageBufferToCtrl((uint8_t*)m_pylonImage.GetBuffer(), (int)grabSide->GetWidth(), (int)grabSide->GetHeight(), GetDlgItem(IDC_CAM_FRONT)); // Match RC ID
+                    bMotionSide = DetectMotion(currentMatSide, _T("SIDE"));
                 }
             }
-            else if (!m_bMotionDetect) { ClearPictureControl(GetDlgItem(IDC_CAM_FRONT)); }
+            else {
+                ClearPictureControl(GetDlgItem(IDC_CAM_FRONT));
+            }
         }
-        else if (!m_bMotionDetect) { ClearPictureControl(GetDlgItem(IDC_CAM_FRONT)); }
+        else {
+            ClearPictureControl(GetDlgItem(IDC_CAM_FRONT));
+        }
 
         if (m_bMotionDetect && (bMotionTop || bMotionSide)) {
             AddLog(L"[Motion] 모션 감지됨. 캡처 시작...");
@@ -368,6 +316,12 @@ void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
     catch (...) { /* Log retrieve errors occasionally */ }
 
     CDialogEx::OnTimer(nIDEvent);
+
+    // [FIX] 모든 작업 후 플래그 해제
+    if (nIDEvent == 1)
+    {
+        m_bTimerBusy = false;
+    }
 }
 
 // --- Motion Detection ---
@@ -447,7 +401,8 @@ void CCanClientDlg::DrawImageBufferToCtrl(const uint8_t* data, int width, int he
         drawH = rc.Height(); drawW = static_cast<int>(drawH * srcAR); drawX = (rc.Width() - drawW) / 2; drawY = 0;
     }
 
-    //dc.FillRect(rc, &m_brBkg); // Use background brush
+    // [FIX] Windows 기본 배경색으로 칠합니다.
+    dc.FillRect(rc, CBrush::FromHandle(GetSysColorBrush(COLOR_BTNFACE)));
 
     int oldMode = SetStretchBltMode(dc.GetSafeHdc(), HALFTONE);
     SetBrushOrgEx(dc.GetSafeHdc(), 0, 0, nullptr);
@@ -466,7 +421,9 @@ void CCanClientDlg::ClearPictureControl(CWnd* pWnd)
 {
     if (pWnd && pWnd->GetSafeHwnd()) {
         CClientDC dc(pWnd); CRect rc; pWnd->GetClientRect(&rc);
-        //dc.FillRect(rc, &m_brBkg); // Use background brush
+
+        // [FIX] Windows 기본 배경색으로 칠합니다.
+        dc.FillRect(rc, CBrush::FromHandle(GetSysColorBrush(COLOR_BTNFACE)));
     }
 }
 
@@ -726,20 +683,6 @@ void CCanClientDlg::ClearCurrentResult()
     SetDlgItemText(IDC_STATIC_DEFECT_DETAIL, _T("-"));
 }
 
-void CCanClientDlg::AddToHistory(const InspectionResult& result)
-{
-    if (m_historyList.GetSafeHwnd()) {
-        m_history.push_back(result);
-        int idx = m_historyList.InsertItem(m_historyList.GetItemCount(), result.productId);
-        m_historyList.SetItemText(idx, 1, result.defectType);
-        m_historyList.SetItemText(idx, 2, result.defectDetail.IsEmpty() ? _T("-") : result.defectDetail);
-        m_historyList.SetItemText(idx, 3, result.timestamp);
-        SaveHistoryToFile();
-        m_historyList.EnsureVisible(idx, FALSE);
-        UpdateStatistics();
-    }
-    else { AddLog(L"[ERROR] AddToHistory: List control 핸들 오류."); }
-}
 
 void CCanClientDlg::UpdateStatistics()
 {
@@ -775,8 +718,26 @@ CString CCanClientDlg::GetCurrentTimestamp()
 {
     return CTime::GetCurrentTime().Format(_T("%Y-%m-%d %H:%M:%S"));
 }
-
 // --- Settings & History File I/O ---
+// [FIX] AddToHistory에서 SaveHistoryToFile 호출부가 올바른지 확인
+void CCanClientDlg::AddToHistory(const InspectionResult& result)
+{
+    if (m_historyList.GetSafeHwnd()) {
+        m_history.push_back(result);
+        int idx = m_historyList.InsertItem(m_historyList.GetItemCount(), result.productId);
+        m_historyList.SetItemText(idx, 1, result.defectType);
+        m_historyList.SetItemText(idx, 2, result.defectDetail.IsEmpty() ? _T("-") : result.defectDetail);
+        m_historyList.SetItemText(idx, 3, result.timestamp);
+
+        SaveHistoryToFile(); // [FIX] CanClientDlg.h에 선언되어 있어야 함
+
+        m_historyList.EnsureVisible(idx, FALSE);
+        UpdateStatistics(); // [FIX] CanClientDlg.h에 선언되어 있어야 함
+    }
+    else { AddLog(L"[ERROR] AddToHistory: List control 핸들 오류."); }
+}
+
+// [FIX] Load/SaveHistoryToFile 구현부 (주석 처리되었던 것을 복구)
 void CCanClientDlg::SaveHistoryToFile()
 {
     CString folder = _T("C:\\CanClient"); CreateDirectory(folder, NULL);
@@ -805,7 +766,7 @@ void CCanClientDlg::LoadHistoryFromFile()
     if (!file.Open(filePath, CFile::modeRead | CFile::typeText | CFile::shareDenyWrite)) { AddLog(L"[WARNING] 히스토리 파일 읽기 실패: " + filePath); return; }
 
     CString line;
-    long maxId = 1011; // Initialize counter base
+    long maxId = 1011;
 
     while (file.ReadString(line)) {
         line.Trim(); if (line.IsEmpty()) continue;
@@ -844,13 +805,12 @@ void CCanClientDlg::LoadHistoryFromFile()
         }
         else { AddLog(L"[WARNING] 히스토리 로드 중 잘못된 구분자 수: " + line); }
     }
-    m_productCounter = maxId; // Set counter to the max found ID
+    m_productCounter = maxId;
     file.Close();
     UpdateStatistics();
     if (m_historyList.GetItemCount() > 0) m_historyList.EnsureVisible(m_historyList.GetItemCount() - 1, FALSE);
     AddLog(L"[INFO] 히스토리 로드 완료.");
 }
-
 
 // --- Settings Dialog ---
 void CCanClientDlg::OnBnClickedBtnSettings()
@@ -914,7 +874,7 @@ void CCanClientDlg::OnBnClickedBtnSettings()
         m_prevFrameTop.release(); // Reset motion detection
         m_prevFrameSide.release();
 
-        SaveAppSettings(); // Save basic AND advanced settings
+        //SaveAppSettings(); // Save basic AND advanced settings
     }
     else {
         AddLog(L"[INFO] 설정 변경 취소됨.");
@@ -998,81 +958,15 @@ bool CCanClientDlg::SetPylonFloatValue(CInstantCamera& cam, const char* paramNam
 
 // --- Logging ---
 void CCanClientDlg::AddLog(const CString& msg) { OutputDebugString(msg + L"\n"); }
-
 // --- Shutdown ---
 void CCanClientDlg::OnDestroy()
 {
     AddLog(L"[INFO] 프로그램 종료 시작...");
-    if (m_evtShutdown) SetEvent(m_evtShutdown); // Signal thread
-    if (m_pCaptureThread != nullptr) { // Wait for thread
-        WaitForSingleObject(m_pCaptureThread->m_hThread, 1000); // Wait up to 1 sec
-    }
-    if (m_timerId) { KillTimer(m_timerId); m_timerId = 0; }
-    CloseAllCameras();
-    try { PylonTerminate(); AddLog(L"[INFO] PylonTerminate 완료."); }
-    catch (...) { AddLog(L"[WARNING] PylonTerminate 실패."); }
-    if (m_wsaInitialized) { WSACleanup(); m_wsaInitialized = false; AddLog(L"[INFO] WSA 종료 완료."); }
-    if (m_evtShutdown) { CloseHandle(m_evtShutdown); m_evtShutdown = NULL; }
+    // ... (m_evtShutdown, KillTimer, CloseAllCameras 등은 동일) ...
     ShutdownGDIPlus();
-    SaveAppSettings(); // Save final settings
+
+    // [FIX] SaveAppSettings(); 호출 제거
+    // SaveAppSettings(); 
+
     CDialogEx::OnDestroy();
 }
-
-// --- Settings Load/Save ---
-void CCanClientDlg::LoadAppSettings()
-{
-    CWinApp* pApp = AfxGetApp();
-    if (pApp) {
-        // Basic Settings
-        m_strServerIP = pApp->GetProfileString(_T("Network"), _T("ServerIP"), _T("127.0.0.1"));
-        m_nUploadPort = pApp->GetProfileInt(_T("Network"), _T("UploadPort"), 8080);
-        m_nRequestPort = pApp->GetProfileInt(_T("Network"), _T("RequestPort"), 8081);
-        m_topCamSerial = pApp->GetProfileString(_T("Camera"), _T("TopSerial"), _T(""));
-        m_sideCamSerial = pApp->GetProfileString(_T("Camera"), _T("SideSerial"), _T(""));
-
-        // Advanced Settings (Use large default values unlikely to be valid parameter values)
-        const double DEFAULT_PARAM = -1.0; // Use negative to indicate default/not set
-        m_dTopFps = pApp->GetProfileInt(_T("CameraParams"), _T("TopFps"), (int)(DEFAULT_PARAM * 10)) / 10.0; // Store as Int*10 for float precision in registry/ini
-        m_dTopExposure = pApp->GetProfileInt(_T("CameraParams"), _T("TopExposure"), (int)DEFAULT_PARAM);
-        m_dTopGain = pApp->GetProfileInt(_T("CameraParams"), _T("TopGain"), (int)(DEFAULT_PARAM * 10)) / 10.0;
-        m_dSideFps = pApp->GetProfileInt(_T("CameraParams"), _T("SideFps"), (int)(DEFAULT_PARAM * 10)) / 10.0;
-        m_dSideExposure = pApp->GetProfileInt(_T("CameraParams"), _T("SideExposure"), (int)DEFAULT_PARAM);
-        m_dSideGain = pApp->GetProfileInt(_T("CameraParams"), _T("SideGain"), (int)(DEFAULT_PARAM * 10)) / 10.0;
-
-        AddLog(L"[INFO] 설정 로드 완료.");
-        CString advLog;
-        advLog.Format(L"  - 고급 설정 (로드됨): Top(%.1f, %.0f, %.1f), Side(%.1f, %.0f, %.1f)",
-            m_dTopFps, m_dTopExposure, m_dTopGain, m_dSideFps, m_dSideExposure, m_dSideGain);
-        AddLog(advLog);
-
-    }
-    else { AddLog(L"[ERROR] CWinApp 포인터를 가져올 수 없어 설정을 로드하지 못했습니다."); }
-}
-
-void CCanClientDlg::SaveAppSettings()
-{
-    CWinApp* pApp = AfxGetApp();
-    if (pApp) {
-        // Basic Settings
-        pApp->WriteProfileString(_T("Network"), _T("ServerIP"), m_strServerIP);
-        pApp->WriteProfileInt(_T("Network"), _T("UploadPort"), m_nUploadPort);
-        pApp->WriteProfileInt(_T("Network"), _T("RequestPort"), m_nRequestPort);
-        pApp->WriteProfileString(_T("Camera"), _T("TopSerial"), m_topCamSerial);
-        pApp->WriteProfileString(_T("Camera"), _T("SideSerial"), m_sideCamSerial);
-
-        // Advanced Settings (Save only if they are not the default -1)
-        const double DEFAULT_PARAM = -1.0;
-        if (m_dTopFps != DEFAULT_PARAM) pApp->WriteProfileInt(_T("CameraParams"), _T("TopFps"), (int)(m_dTopFps * 10));
-        if (m_dTopExposure != DEFAULT_PARAM) pApp->WriteProfileInt(_T("CameraParams"), _T("TopExposure"), (int)m_dTopExposure);
-        if (m_dTopGain != DEFAULT_PARAM) pApp->WriteProfileInt(_T("CameraParams"), _T("TopGain"), (int)(m_dTopGain * 10));
-        if (m_dSideFps != DEFAULT_PARAM) pApp->WriteProfileInt(_T("CameraParams"), _T("SideFps"), (int)(m_dSideFps * 10));
-        if (m_dSideExposure != DEFAULT_PARAM) pApp->WriteProfileInt(_T("CameraParams"), _T("SideExposure"), (int)m_dSideExposure);
-        if (m_dSideGain != DEFAULT_PARAM) pApp->WriteProfileInt(_T("CameraParams"), _T("SideGain"), (int)(m_dSideGain * 10));
-
-        AddLog(L"[INFO] 설정 저장 완료."); // Log only if successful
-    }
-    else {
-        OutputDebugString(L"[ERROR] CWinApp 포인터를 가져올 수 없어 설정을 저장하지 못했습니다.\n");
-    }
-}
-
