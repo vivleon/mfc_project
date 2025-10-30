@@ -85,5 +85,10 @@ private:
 	// Helper to get the currently selected active camera for advanced settings
 	Pylon::CInstantCamera* GetSelectedCameraForAdvancedSettings(CString& role);
 
+public:
+	afx_msg void OnTcnSelchangeTab1(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg void OnCbnSelchangeComboTop();
+	afx_msg void OnTcnSelchangeTab2(NMHDR* pNMHDR, LRESULT* pResult);
+	afx_msg void OnNMClickTabSettings(NMHDR* pNMHDR, LRESULT* pResult);
 };
 
