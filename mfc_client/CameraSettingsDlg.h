@@ -2,59 +2,88 @@
 #include "afxdialogex.h"
 #include <vector>
 #include <map>
-#include <pylon/PylonIncludes.h> // Pylon DeviceInfo
-
-// CCameraSettingsDlg dialog
+#include <pylon/PylonIncludes.h> // Pylon DeviceInfo & Camera
+#include <afxcmn.h> // For CSliderCtrl, CTabCtrl
 
 class CCameraSettingsDlg : public CDialogEx
 {
 	DECLARE_DYNAMIC(CCameraSettingsDlg)
 
 public:
-	CCameraSettingsDlg(CWnd* pParent = nullptr);   // standard constructor
+	CCameraSettingsDlg(CWnd* pParent = nullptr);
 	virtual ~CCameraSettingsDlg();
 
-	// Dialog Data
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_CAMERA_SETTINGS };
 #endif
 
 protected:
-	virtual void DoDataExchange(CDataExchange* pDX);    // DDX/DDV support
+	virtual void DoDataExchange(CDataExchange* pDX);
 	virtual BOOL OnInitDialog();
-
-	// [FIX] 'OnBnClickedOk' 함수의 선언이 누락되어 추가했습니다.
 	afx_msg void OnBnClickedOk();
+	afx_msg void OnTcnSelchangeTabSettings(NMHDR* pNMHDR, LRESULT* pResult); // Tab change handler
+	afx_msg void OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollBar); // Slider handler
 	DECLARE_MESSAGE_MAP()
 
 public:
-	// 부모(CanClientDlg)가 설정해줄 데이터
-	Pylon::DeviceInfoList_t m_availableDevices; // Pylon 장치 정보 리스트
-	CString m_currentTopSerial;  // 현재 설정된 TOP 카메라 시리얼
-	CString m_currentSideSerial; // 현재 설정된 SIDE 카메라 시리얼
+	// --- Input Data from Parent ---
+	Pylon::DeviceInfoList_t m_availableDevices;
+	CString m_currentTopSerial;
+	CString m_currentSideSerial;
+	CString m_strServerIP;
+	int     m_nUploadPort;
+	int     m_nRequestPort;
+	// [NEW] Pointers to actual camera objects to read parameters
+	Pylon::CInstantCamera* m_pCamTop;
+	Pylon::CInstantCamera* m_pCamSide;
 
-	// 대화상자에서 선택한 결과를 부모에게 다시 전달할 데이터
+	// --- Output Data to Parent ---
 	CString m_selectedTopSerial;
 	CString m_selectedSideSerial;
+	// [NEW] Selected advanced parameters
+	double m_dFps;
+	double m_dExposure;
+	double m_dGain;
+	CString m_sSelectedCamRole; // "TOP" or "SIDE" for which params were loaded/saved
 
-	// [NEW] Server Settings (Passed from/to Parent)
-	CString m_strServerIP;
-	int m_nUploadPort;
-	int m_nRequestPort;
 
 private:
+	// --- Basic Controls ---
 	CComboBox m_comboTop;
 	CComboBox m_comboSide;
-	void PopulateComboBoxes();
-	CString GetDeviceString(const Pylon::CDeviceInfo& dev);
-
-	// [NEW] Server Controls
 	CEdit m_editServerIP;
 	CEdit m_editUploadPort;
 	CEdit m_editRequestPort;
 
-public:
-	afx_msg void OnCbnSelchangeCombo1();
-	afx_msg void OnEnChangeEditServerIp();
+	// --- Advanced Controls ---
+	CTabCtrl m_tabSettings;
+	CStatic m_groupAdvSettings; // Groupbox for advanced
+	CSliderCtrl m_sliderFps;
+	CEdit m_editFps;
+	CSliderCtrl m_sliderExposure;
+	CEdit m_editExposure;
+	CSliderCtrl m_sliderGain;
+	CEdit m_editGain;
+	CStatic m_staticTargetCam; // Label showing target camera
+
+	// --- Internal Helpers ---
+	void PopulateComboBoxes();
+	CString GetDeviceString(const Pylon::CDeviceInfo& dev);
+	void ShowTabControls(int nTab);
+	void InitAdvancedControls();
+	void LoadCameraParameters(); // Load parameters from selected camera
+	void SaveCameraParameters(); // Save parameters from UI controls to members
+	bool UpdateEditFromSlider(CSliderCtrl& slider, CEdit& edit, double minVal, double maxVal, CString format = _T("%.1f"));
+	bool UpdateSliderFromEdit(CEdit& edit, CSliderCtrl& slider, double minVal, double maxVal);
+
+	// Pylon parameter helpers
+	template<typename TParam>
+	bool GetPylonValue(Pylon::CInstantCamera* pCam, const char* paramName, TParam& value);
+	template<typename TParam>
+	void UpdateSliderRange(Pylon::CInstantCamera* pCam, const char* paramName, CSliderCtrl& slider, CEdit& edit);
+
+	// Helper to get the currently selected active camera for advanced settings
+	Pylon::CInstantCamera* GetSelectedCameraForAdvancedSettings(CString& role);
+
 };
 

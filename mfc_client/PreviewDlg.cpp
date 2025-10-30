@@ -1,49 +1,57 @@
-// PreviewDlg.cpp : 구현 파일
-//
-
 #include "pch.h"
 #include "CanClient.h"
 #include "afxdialogex.h"
 #include "PreviewDlg.h"
-#include "resource.h"
 
-// GDI+ Headers
+// GDI+
 #include <gdiplus.h>
-#pragma comment(lib, "gdiplus.lib")
+using namespace Gdiplus;
+// GDI+ Token is now managed by CCanClientDlg
 
-// GDI+ Token (Static member for proper initialization/shutdown)
-// This should ideally be managed by the application class (CCanClientApp)
-// For simplicity here, we use a static variable within the dialog.
-// Note: This simple approach might cause issues if multiple dialogs are created/destroyed rapidly.
-namespace // Anonymous namespace for static variable
-{
-    ULONG_PTR gdiplusToken = 0;
-    bool gdiplusInitialized = false;
-
-    void EnsureGdiplusInitialized() {
-        if (!gdiplusInitialized) {
-            Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-            Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusStartupInput, NULL);
-            gdiplusInitialized = true;
-            // Ideally, GdiplusShutdown should be called when the application exits.
-            // A simple atexit handler might work here for basic cases.
-            atexit([] { if (gdiplusInitialized) Gdiplus::GdiplusShutdown(gdiplusToken); });
-        }
-    }
-} // end anonymous namespace
-
-
+// CPreviewDlg Implementation
 IMPLEMENT_DYNAMIC(CPreviewDlg, CDialogEx)
 
 CPreviewDlg::CPreviewDlg(CWnd* pParent /*=nullptr*/)
     : CDialogEx(IDD_PREVIEW_DLG, pParent)
+    , m_imgTop(nullptr)
+    , m_imgSide(nullptr)
 {
-    EnsureGdiplusInitialized(); // Ensure GDI+ is started
 }
 
 CPreviewDlg::~CPreviewDlg()
 {
-    // GDI+ shutdown is handled by atexit handler now (simplified approach)
+    // Clean up GDI+ images
+    if (m_imgTop) delete m_imgTop;
+    if (m_imgSide) delete m_imgSide;
+}
+
+// [NEW] Set paths
+void CPreviewDlg::SetImagePaths(CString strPathTop, CString strPathSide)
+{
+    m_strPathTop = strPathTop;
+    m_strPathSide = strPathSide;
+}
+
+// [NEW] Load images from file paths
+void CPreviewDlg::LoadImageFromFile(CString sPath, Gdiplus::Image** ppImage)
+{
+    if (sPath.IsEmpty()) return;
+
+    // Free existing image if any
+    if (*ppImage)
+    {
+        delete* ppImage;
+        *ppImage = nullptr;
+    }
+
+    // Load new image
+    *ppImage = Gdiplus::Image::FromFile(sPath);
+    if ((*ppImage)->GetLastStatus() != Gdiplus::Ok)
+    {
+        AfxMessageBox(L"이미지 로드 실패: " + sPath);
+        delete* ppImage;
+        *ppImage = nullptr;
+    }
 }
 
 void CPreviewDlg::DoDataExchange(CDataExchange* pDX)
@@ -51,114 +59,78 @@ void CPreviewDlg::DoDataExchange(CDataExchange* pDX)
     CDialogEx::DoDataExchange(pDX);
 }
 
-BEGIN_MESSAGE_MAP(CPreviewDlg, CDialogEx)
-END_MESSAGE_MAP()
-
 BOOL CPreviewDlg::OnInitDialog()
 {
     CDialogEx::OnInitDialog();
 
-    if (!m_bufLeft.empty()) {
-        if (BufferToCBitmap(m_bufLeft, m_bmpLeft)) {
-            ((CStatic*)GetDlgItem(IDC_IMG_LEFT))->SetBitmap(m_bmpLeft);
-        }
-        else { AfxMessageBox(_T("왼쪽 이미지를 로드할 수 없습니다.")); }
-    }
-    if (!m_bufRight.empty()) {
-        if (BufferToCBitmap(m_bufRight, m_bmpRight)) {
-            ((CStatic*)GetDlgItem(IDC_IMG_RIGHT))->SetBitmap(m_bmpRight);
-        }
-        else { AfxMessageBox(_T("오른쪽 이미지를 로드할 수 없습니다.")); }
-    }
+    // Load images
+    LoadImageFromFile(m_strPathTop, &m_imgTop);
+    LoadImageFromFile(m_strPathSide, &m_imgSide);
+
+    // [NEW] Set dark background for preview
+    // We will do this in OnPaint to prevent flicker
+    this->ModifyStyle(0, WS_CLIPCHILDREN);
 
     return TRUE;
 }
 
-void CPreviewDlg::SetImageBuffer(const std::vector<unsigned char>& buffer, int index)
+BEGIN_MESSAGE_MAP(CPreviewDlg, CDialogEx)
+    ON_WM_PAINT()
+END_MESSAGE_MAP()
+
+// [NEW] Draw images on paint
+void CPreviewDlg::OnPaint()
 {
-    if (index == 0) m_bufLeft = buffer;
-    else m_bufRight = buffer;
+    CPaintDC dc(this); // device context for painting
+
+    // Fill background
+    CRect rcClient;
+    GetClientRect(&rcClient);
+    CBrush brBkg;
+    brBkg.CreateSolidBrush(RGB(30, 30, 30)); // Dark background
+    dc.FillRect(&rcClient, &brBkg);
+    brBkg.DeleteObject();
+
+    // Draw images
+    DrawImageToCtrl(m_imgTop, IDC_IMG_LEFT);
+    DrawImageToCtrl(m_imgSide, IDC_IMG_RIGHT);
 }
 
-bool CPreviewDlg::BufferToCBitmap(const std::vector<unsigned char>& buffer, CBitmap& bitmap)
+void CPreviewDlg::DrawImageToCtrl(Gdiplus::Image* pImage, UINT nCtrlID)
 {
-    try {
-        cv::Mat mat = cv::imdecode(buffer, cv::IMREAD_COLOR);
-        if (mat.empty()) { return false; }
-        return MatToCBitmap(mat, bitmap);
+    CWnd* pWnd = GetDlgItem(nCtrlID);
+    if (!pWnd) return;
+
+    CClientDC dc(pWnd);
+    CRect rc;
+    pWnd->GetClientRect(&rc);
+
+    // Fill background first
+    dc.FillSolidRect(rc, RGB(0, 0, 0)); // Black background for image boxes
+
+    if (!pImage) return; // No image to draw
+
+    Graphics graphics(dc.GetSafeHdc());
+    graphics.SetInterpolationMode(InterpolationModeHighQuality);
+
+    // Calculate aspect ratio
+    RectF rcDraw;
+    REAL srcAR = (REAL)pImage->GetWidth() / pImage->GetHeight();
+    REAL dstAR = (REAL)rc.Width() / rc.Height();
+
+    if (srcAR > dstAR) {
+        rcDraw.Width = (REAL)rc.Width();
+        rcDraw.Height = rc.Width() / srcAR;
+        rcDraw.X = 0;
+        rcDraw.Y = (rc.Height() - rcDraw.Height) / 2;
     }
-    catch (const cv::Exception& ex) { /* Log error */ return false; }
-}
-
-bool CPreviewDlg::MatToCBitmap(const cv::Mat& mat, CBitmap& bitmap)
-{
-    if (mat.empty()) return false;
-
-    int width = mat.cols;
-    int height = mat.rows;
-    int channels = mat.channels();
-    cv::Mat tempMat = mat; // Create a modifiable copy if needed
-
-    // Ensure 3 channels (BGR) for SetDIBitsToDevice
-    if (channels == 1) { cv::cvtColor(mat, tempMat, cv::COLOR_GRAY2BGR); }
-    else if (channels == 4) { cv::cvtColor(mat, tempMat, cv::COLOR_BGRA2BGR); }
-    else if (channels != 3) { return false; } // Unsupported format
-
-    if (bitmap.GetSafeHandle()) { bitmap.DeleteObject(); }
-
-    // [FIX] CreateCompatibleBitmap needs a CDC*
-    CClientDC screenDC(NULL); // Get DC for the screen
-    if (!bitmap.CreateCompatibleBitmap(&screenDC, width, height)) {
-        return false;
-    }
-
-    // Prepare BITMAPINFO
-    BITMAPINFO bi;
-    ZeroMemory(&bi, sizeof(BITMAPINFO));
-    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-    bi.bmiHeader.biWidth = width;
-    bi.bmiHeader.biHeight = -height; // Top-down DIB for SetDIBitsToDevice
-    bi.bmiHeader.biPlanes = 1;
-    bi.bmiHeader.biBitCount = 24; // 3 channels * 8 bits
-    bi.bmiHeader.biCompression = BI_RGB;
-
-    // Use SetDIBits to copy data directly
-    // Ensure the CBitmap object is selected into a DC before calling SetDIBits? No, needed for GetDIBits.
-    // SetDIBits works directly on the HBITMAP handle.
-    // Need a compatible DC to call SetDIBitsToDevice? Check documentation.
-    // SetDIBits function might be better here as it works directly with HBITMAP.
-
-    // Let's stick to SetDIBitsToDevice as it's common, requires a DC.
-    CDC memDC;
-    memDC.CreateCompatibleDC(&screenDC); // Create a memory DC compatible with the screen
-    CBitmap* pOldBmp = memDC.SelectObject(&bitmap);
-
-    // SetDIBitsToDevice expects the data pointer (tempMat.data)
-    int result = SetDIBitsToDevice(
-        memDC.GetSafeHdc(), // Target DC
-        0, 0,             // Destination x, y
-        width, height,    // Width, Height
-        0, 0,             // Source x, y
-        0,                // Start scan line
-        height,           // Number of scan lines
-        tempMat.data,     // Pointer to image data
-        &bi,              // Pointer to BITMAPINFO
-        DIB_RGB_COLORS    // Color usage
-    );
-
-    memDC.SelectObject(pOldBmp); // Restore old bitmap
-    memDC.DeleteDC();           // Clean up memory DC
-
-    if (result == 0) {
-        // Error occurred
-        DWORD error = GetLastError();
-        CString msg;
-        msg.Format(L"SetDIBitsToDevice failed with error code: %lu", error);
-        AfxMessageBox(msg);
-        bitmap.DeleteObject(); // Clean up bitmap if failed
-        return false;
+    else {
+        rcDraw.Height = (REAL)rc.Height();
+        rcDraw.Width = rc.Height() * srcAR;
+        rcDraw.X = (rc.Width() - rcDraw.Width) / 2;
+        rcDraw.Y = 0;
     }
 
-    return true;
+    graphics.DrawImage(pImage, rcDraw, 0, 0, (REAL)pImage->GetWidth(), (REAL)pImage->GetHeight(), UnitPixel);
 }
 

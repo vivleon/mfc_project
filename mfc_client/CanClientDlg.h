@@ -1,27 +1,37 @@
 ﻿#pragma once
-#include <pylon/PylonIncludes.h>
 #include <vector>
 #include <string>
 #include <map>
-#include "CameraSettingsDlg.h" // 1, 2. 설정 대화상자
+#include <afxmt.h> // For CEvent
 
-// 3, 5. OpenCV 헤더 (모션 감지 및 메모리 내 인코딩용)
-#include <opencv2/opencv.hpp> 
+// [FIX] Include Winsock headers before Pylon to avoid conflicts
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#pragma comment(lib, "ws2_32.lib") // Ensure linker dependency
+
+#include <pylon/PylonIncludes.h>
+#include <opencv2/opencv.hpp>
+#include "CameraSettingsDlg.h"
+#include "PreviewDlg.h"       // For Preview Dialog
+
+// [NEW] GDI+ for modern UI and image preview
+#include <gdiplus.h>
+#pragma comment (lib,"gdiplus.lib")
 
 using namespace Pylon;
 
-// ===== 검사 결과 구조체 =====
-struct InspectionResult
-{
-    CString productId;      // 제품번호
-    CString defectType;     // 판정결과 ("정상" / "불량" / "에러")
-    CString defectDetail;   // 불량종류
-    CString timestamp;      // 시간
-};
-
+// --- Forward Declarations ---
 class CCanClientDlg;
 
-// 5. 스레드 전달용 구조체
+// --- Structs ---
+struct InspectionResult
+{
+    CString productId;
+    CString defectType;
+    CString defectDetail;
+    CString timestamp;
+};
+
 struct CaptureThreadParams
 {
     CCanClientDlg* pDlg;
@@ -29,10 +39,12 @@ struct CaptureThreadParams
     bool bUseSide;
 };
 
+// --- Main Dialog Class ---
 class CCanClientDlg : public CDialogEx
 {
 public:
     CCanClientDlg(CWnd* pParent = nullptr);
+    virtual ~CCanClientDlg(); // [NEW] Added destructor for cleanup
 
 #ifdef AFX_DESIGN_TIME
     enum { IDD = IDD_CANCLIENT_DIALOG };
@@ -45,52 +57,78 @@ protected:
     afx_msg void OnBnClickedBtnStart();
     afx_msg void OnTimer(UINT_PTR nIDEvent);
     afx_msg void OnBnClickedBtnSettings();
-    afx_msg LRESULT OnCaptureComplete(WPARAM wParam, LPARAM lParam); // [FIX] Removed duplicate declaration
-    afx_msg void OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult);
+    afx_msg LRESULT OnCaptureComplete(WPARAM wParam, LPARAM lParam);
+    afx_msg void OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult); // List double-click
+    afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor); // Dark Mode UI
     DECLARE_MESSAGE_MAP()
 
 private:
     HICON m_hIcon;
 
-    // Camera Members (Unchanged)
+    // --- GDI+ ---
+    ULONG_PTR m_gdiplusToken;
+    void InitGDIPlus();
+    void ShutdownGDIPlus();
+
+    // --- Dark Mode UI ---
+    CBrush m_brBkg;     // Dialog background
+    CBrush m_brList;    // List/Edit background
+    CBrush m_brStatic;  // Static text/groupbox background
+
+    // --- Pylon Cameras ---
     Pylon::DeviceInfoList_t m_availableDevices;
-    CString m_topCamSerial;
-    CString m_sideCamSerial;
-    CCameraSettingsDlg m_settingsDlg;
     CInstantCamera        m_camTop;
-    CInstantCamera        m_camSide;
+    CInstantCamera        m_camSide; // [RENAMED] m_camFront -> m_camSide
     CImageFormatConverter m_converter;
     CPylonImage           m_pylonImage;
-    UINT_PTR              m_timerId = 0;
+    UINT_PTR              m_timerId;
 
-    // Motion Detection Members (Unchanged)
+    // --- Motion Detection ---
     CButton m_checkMotionDetect;
     BOOL    m_bMotionDetect;
     cv::Mat m_prevFrameTop;
     cv::Mat m_prevFrameSide;
-    bool    m_bCaptureInProgress;
-    bool DetectMotion(cv::Mat& currentFrame, CString role);
+    bool DetectMotion(cv::Mat& currentFrame, CString role); // Implementation added
     void ConvertPylonBufferToMat(CPylonImage& pylonImg, CGrabResultPtr& grabResult, cv::Mat& outMat);
 
-    // Thread, Network, UI, Data Members
+    // --- Capture Thread ---
+    bool     m_bCaptureInProgress;
+    HANDLE   m_evtShutdown; // Event for safe thread shutdown
+    CWinThread* m_pCaptureThread; // [NEW] Pointer to manage the thread
     static UINT CaptureWorkThread(LPVOID pParam);
     void TriggerCapture(bool bUseTop, bool bUseSide);
     void ProcessCapture(bool bUseTop, bool bUseSide);
-    bool m_wsaInitialized = false;
+
+    // --- Network & Settings ---
+    bool m_wsaInitialized;
+    CString m_strServerIP;
+    int     m_nUploadPort;
+    int     m_nRequestPort;
+    void LoadAppSettings();
+    void SaveAppSettings();
+
+    // --- Dialog Controls & Data ---
+    CCameraSettingsDlg m_settingsDlg;
     CListCtrl m_historyList;
     std::vector<InspectionResult> m_history;
-    int m_productCounter = 1012;
+    LONG m_productCounter; // Changed to LONG for InterlockedIncrement
 
-    // [NEW] Server IP and Port Members
-    CString m_strServerIP;
-    int m_nUploadPort;
-    int m_nRequestPort;
+    // --- Camera Settings ---
+    CString m_topCamSerial;
+    CString m_sideCamSerial;
 
-    // Helper Functions
+    // --- [NEW] Advanced Camera Settings Storage ---
+    double m_dTopFps, m_dTopExposure, m_dTopGain;
+    double m_dSideFps, m_dSideExposure, m_dSideGain;
+    bool ApplyAdvancedCameraSettings(CInstantCamera& cam, double fps, double exposure, double gain);
+    bool SetPylonFloatValue(CInstantCamera& cam, const char* paramName, double value); // Helper
+
+
+    // --- Helper Functions ---
     void DrawImageBufferToCtrl(const uint8_t* data, int width, int height, CWnd* pWnd);
     void ClearPictureControl(CWnd* pWnd);
     bool SendImageToServer(const std::vector<unsigned char>& imgBuffer, CString role, std::string& response);
-    bool RequestImageFromServer(CString productID, CString role, std::vector<unsigned char>& imgBuffer);
+    // [REMOVED] RequestImageFromServer (replaced by local file logic)
     void InitHistoryList();
     void UpdateCurrentResult(const InspectionResult& result);
     void AddToHistory(const InspectionResult& result);
@@ -100,13 +138,10 @@ private:
     void SaveHistoryToFile();
     CString GenerateProductId();
     CString GetCurrentTimestamp();
-    bool ParseJsonResponse(const std::string& json, InspectionResult& result);
+    bool ParseJsonResponse(const std::string& jsonStr, InspectionResult& result);
     void ScanPylonDevices();
     bool OpenAssignedCameras();
     void CloseAllCameras();
     void AddLog(const CString& msg);
-
-    // [NEW] Settings Load/Save Function Declarations
-    void LoadAppSettings();
-    void SaveAppSettings();
 };
+
