@@ -44,7 +44,7 @@ class CCanClientDlg : public CDialogEx
 {
 public:
     CCanClientDlg(CWnd* pParent = nullptr);
-    virtual ~CCanClientDlg(); // [NEW] Added destructor for cleanup
+    virtual ~CCanClientDlg() noexcept; // 'noexcept' 추가// [NEW] Added destructor for cleanup
 
 #ifdef AFX_DESIGN_TIME
     enum { IDD = IDD_CANCLIENT_DIALOG };

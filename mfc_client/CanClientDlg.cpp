@@ -4,10 +4,16 @@
 #include "CanClientDlg.h"
 #include "afxdialogex.h"
 #include <fstream>
+#include "CameraSettingsDlg.h"
+
 
 // JSON
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
+
+#include <pylon/ParameterIncludes.h>
+using namespace Pylon;
+using namespace GenApi;
 
 // OpenCV
 #include <opencv2/opencv.hpp>
@@ -73,7 +79,7 @@ CCanClientDlg::CCanClientDlg(CWnd* pParent)
     m_brStatic.CreateSolidBrush(RGB(50, 50, 50));
 }
 // --- Destructor ---
-CCanClientDlg::~CCanClientDlg()
+CCanClientDlg::~CCanClientDlg() noexcept
 {
     // Ensure brushes are deleted
     m_brBkg.DeleteObject();
@@ -107,14 +113,50 @@ void CCanClientDlg::ShutdownGDIPlus()
     }
 }
 
+void CCanClientDlg::InitHistoryList()
+{
+    // 리스트 컨트롤(m_historyList)의 스타일을 설정합니다.
+    m_historyList.SetExtendedStyle(LVS_EX_FULLROWSELECT | LVS_EX_GRIDLINES);
+
+    // 리스트 컨트롤에 컬럼(열)을 추가합니다.
+    // (LoadHistoryFromFile / AddToHistory 함수에서 사용하는 순서와 일치시킵니다)
+    m_historyList.InsertColumn(0, _T("제품 ID"), LVCFMT_LEFT, 100);
+    m_historyList.InsertColumn(1, _T("결함 유형"), LVCFMT_LEFT, 100);
+    m_historyList.InsertColumn(2, _T("상세 내용"), LVCFMT_LEFT, 200);
+    m_historyList.InsertColumn(3, _T("시간"), LVCFMT_LEFT, 150);
+}
+
 // --- OnInitDialog ---
 BOOL CCanClientDlg::OnInitDialog()
 {
-    // ... standard init ...
+    // [FIX] CDialogEx::OnInitDialog()를 가장 먼저 호출해야 합니다.
+    // 이 함수가 DoDataExchange를 실행하여 m_historyList를 포함한
+    // 모든 컨트롤 변수를 초기화(연결)합니다.
+    CDialogEx::OnInitDialog();
+
+    // ... (기존의 SetIcon, Add icon to system tray 등) ...
+    // (만약 CDialogEx::OnInitDialog()가 이미 다른 곳에 있었다면,
+    //  그 위치는 그대로 두고 InitHistoryList()만 이 줄 아래로 옮기면 됩니다.)
+
     InitGDIPlus();
     m_evtShutdown = CreateEvent(NULL, TRUE, FALSE, NULL);
-    // ... WSA init ...
+
+    // ... WSA init (WSAStartup) ...
+    if (!m_wsaInitialized) {
+        WSADATA wsaData;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            AddLog(L"[ERROR] WSAStartup 실패.");
+        }
+        else {
+            m_wsaInitialized = true;
+            AddLog(L"[INFO] WSA 초기화 완료.");
+        }
+    }
+
+    // [FIX] InitHistoryList()를 이 위치로 이동
+    // CDialogEx::OnInitDialog()가 호출된 이후이므로 m_historyList.m_hWnd가 유효합니다.
     InitHistoryList();
+
     ClearCurrentResult();
     LoadAppSettings(); // Load basic AND advanced settings
 
@@ -264,8 +306,21 @@ void CCanClientDlg::CloseAllCameras()
 // --- Timer (Preview & Motion Detection) ---
 void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
 {
-    if (nIDEvent != 1 || m_bCaptureInProgress) {
-        if (nIDEvent != 1) CDialogEx::OnTimer(nIDEvent);
+    if (nIDEvent != 1) { // 타이머 ID가 1이 아니면 기본 처리
+        CDialogEx::OnTimer(nIDEvent);
+        return;
+    }
+
+    // [FIX] 'this' 포인터 및 윈도우 핸들 유효성 검사
+    // GetSafeHwnd()는 'this'가 NULL인지, 'm_hWnd'가 NULL인지
+    // 모두 안전하게 확인합니다.
+    if (!GetSafeHwnd())
+    {
+        return; // 'this'가 NULL이거나 윈도우가 파괴된 상태이므로 즉시 종료
+    }
+
+    // 이제 'this'가 유효한 것이 보장되므로 멤버 변수에 접근해도 안전합니다.
+    if (m_bCaptureInProgress) {
         return;
     }
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "afxdialogex.h"
 #include <vector>
 #include <map>
@@ -11,7 +11,7 @@ class CCameraSettingsDlg : public CDialogEx
 
 public:
 	CCameraSettingsDlg(CWnd* pParent = nullptr);
-	virtual ~CCameraSettingsDlg();
+	virtual ~CCameraSettingsDlg() noexcept; // [FIX 1] noexcept 추가
 
 #ifdef AFX_DESIGN_TIME
 	enum { IDD = IDD_CAMERA_SETTINGS };
@@ -31,8 +31,8 @@ public:
 	CString m_currentTopSerial;
 	CString m_currentSideSerial;
 	CString m_strServerIP;
-	int     m_nUploadPort;
-	int     m_nRequestPort;
+	int m_nUploadPort;   // [FIX 2] 눈에 보이지 않는 특수 공백 제거
+	int m_nRequestPort;  // [FIX 2] 눈에 보이지 않는 특수 공백 제거
 	// [NEW] Pointers to actual camera objects to read parameters
 	Pylon::CInstantCamera* m_pCamTop;
 	Pylon::CInstantCamera* m_pCamSide;
@@ -78,7 +78,7 @@ private:
 
 	// Pylon parameter helpers
 	template<typename TParam>
-	bool GetPylonValue(Pylon::CInstantCamera* pCam, const char* paramName, TParam& value);
+	bool GetPylonValue(Pylon::CInstantCamera* pCam, const char* paramName, TParam& value, bool getMax = false); // <--- 이전 단계에서 수정됨
 	template<typename TParam>
 	void UpdateSliderRange(Pylon::CInstantCamera* pCam, const char* paramName, CSliderCtrl& slider, CEdit& edit);
 
@@ -91,4 +91,3 @@ public:
 	afx_msg void OnTcnSelchangeTab2(NMHDR* pNMHDR, LRESULT* pResult);
 	afx_msg void OnNMClickTabSettings(NMHDR* pNMHDR, LRESULT* pResult);
 };
-
