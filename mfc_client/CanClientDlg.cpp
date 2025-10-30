@@ -74,17 +74,23 @@ CCanClientDlg::CCanClientDlg(CWnd* pParent)
     , m_dSideFps(-1.0), m_dSideExposure(-1.0), m_dSideGain(-1.0)
 {
     m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
-    m_brBkg.CreateSolidBrush(RGB(30, 30, 30));
-    m_brList.CreateSolidBrush(RGB(45, 45, 45));
-    m_brStatic.CreateSolidBrush(RGB(50, 50, 50));
+
+    // [UI FIX] 색상 변경:
+    // m_brBkg.CreateSolidBrush(RGB(30, 30, 30)); // 기존 (너무 어두움)
+    // m_brList.CreateSolidBrush(RGB(45, 45, 45));
+    // m_brStatic.CreateSolidBrush(RGB(50, 50, 50));
+
+    //m_brBkg.CreateSolidBrush(RGB(45, 48, 54));    // 배경: 어두운 차콜
+    //m_brList.CreateSolidBrush(RGB(60, 63, 69));    // 리스트/에디트: 중간 그레이
+    //m_brStatic.CreateSolidBrush(RGB(80, 83, 89));  // 버튼: 밝은 그레이
 }
 // --- Destructor ---
 CCanClientDlg::~CCanClientDlg() noexcept
 {
     // Ensure brushes are deleted
-    m_brBkg.DeleteObject();
-    m_brList.DeleteObject();
-    m_brStatic.DeleteObject();
+    //m_brBkg.DeleteObject();
+    //m_brList.DeleteObject();
+    //m_brStatic.DeleteObject();
 }
 
 
@@ -181,43 +187,42 @@ BOOL CCanClientDlg::OnInitDialog()
     return TRUE;
 }
 
-// --- Dark Mode UI Styling ---
-HBRUSH CCanClientDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
-{
-    // Apply Dark Mode Theme (requires layout from UI_GUIDE.md)
-    switch (nCtlColor)
-    {
-    case CTLCOLOR_DLG:
-        pDC->SetBkColor(RGB(30, 30, 30));
-        return (HBRUSH)m_brBkg.GetSafeHandle();
-
-    case CTLCOLOR_STATIC:
-        pDC->SetBkColor(RGB(30, 30, 30));
-        pDC->SetTextColor(RGB(230, 230, 230));
-        // Use TRANSPARENT mode for static text to avoid drawing background color squares
-        pDC->SetBkMode(TRANSPARENT);
-        // Returning the background brush is still correct for group boxes
-        return (HBRUSH)m_brBkg.GetSafeHandle();
-
-    case CTLCOLOR_BTN:
-        pDC->SetBkColor(RGB(50, 50, 50)); // Slightly lighter background for buttons
-        pDC->SetTextColor(RGB(230, 230, 230));
-        return (HBRUSH)m_brStatic.GetSafeHandle(); // Use the static brush for buttons
-
-    case CTLCOLOR_EDIT:
-        pDC->SetBkColor(RGB(45, 45, 45));
-        pDC->SetTextColor(RGB(230, 230, 230));
-        return (HBRUSH)m_brList.GetSafeHandle();
-
-    case CTLCOLOR_LISTBOX: // Includes ListCtrl header, Combo box dropdown list
-        pDC->SetBkColor(RGB(45, 45, 45));
-        pDC->SetTextColor(RGB(230, 230, 230));
-        return (HBRUSH)m_brList.GetSafeHandle();
-
-    default:
-        return CDialogEx::OnCtlColor(pDC, pWnd, nCtlColor);
-    }
-}
+//// --- Dark Mode UI Styling ---
+//HBRUSH CCanClientDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
+//{
+//    // [UI FIX] 변경된 색상 테마 적용
+//    switch (nCtlColor)
+//    {
+//    case CTLCOLOR_DLG:
+//        pDC->SetBkColor(RGB(45, 48, 54)); // 배경: 어두운 차콜
+//        pDC->SetTextColor(RGB(240, 240, 240)); // 텍스트: 밝은 흰색
+//        return (HBRUSH)m_brBkg.GetSafeHandle();
+//
+//    case CTLCOLOR_STATIC:
+//        pDC->SetBkColor(RGB(45, 48, 54)); // 배경: 어두운 차콜
+//        pDC->SetTextColor(RGB(240, 240, 240)); // 텍스트: 밝은 흰색
+//        pDC->SetBkMode(TRANSPARENT);
+//        return (HBRUSH)m_brBkg.GetSafeHandle();
+//
+//    case CTLCOLOR_BTN:
+//        pDC->SetBkColor(RGB(80, 83, 89)); // 버튼: 밝은 그레이
+//        pDC->SetTextColor(RGB(240, 240, 240));
+//        return (HBRUSH)m_brStatic.GetSafeHandle();
+//
+//    case CTLCOLOR_EDIT:
+//        pDC->SetBkColor(RGB(60, 63, 69)); // 리스트/에디트: 중간 그레이
+//        pDC->SetTextColor(RGB(240, 240, 240));
+//        return (HBRUSH)m_brList.GetSafeHandle();
+//
+//    case CTLCOLOR_LISTBOX: // Includes ListCtrl header, Combo box dropdown list
+//        pDC->SetBkColor(RGB(60, 63, 69)); // 리스트/에디트: 중간 그레이
+//        pDC->SetTextColor(RGB(240, 240, 240));
+//        return (HBRUSH)m_brList.GetSafeHandle();
+//
+//    default:
+//        return CDialogEx::OnCtlColor(pDC, pWnd, nCtlColor);
+//    }
+//}
 
 // --- Camera Functions ---
 void CCanClientDlg::ScanPylonDevices()
@@ -306,21 +311,16 @@ void CCanClientDlg::CloseAllCameras()
 // --- Timer (Preview & Motion Detection) ---
 void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
 {
-    if (nIDEvent != 1) { // 타이머 ID가 1이 아니면 기본 처리
-        CDialogEx::OnTimer(nIDEvent);
+    // [FIX] OnDestroy가 호출되거나 모달 창이 떴을 때
+    // 'this' 포인터가 유효하지 않은 상태로 타이머가 호출되는 것을 방지합니다.
+    if (!GetSafeHwnd())
+    {
         return;
     }
 
-    // [FIX] 'this' 포인터 및 윈도우 핸들 유효성 검사
-    // GetSafeHwnd()는 'this'가 NULL인지, 'm_hWnd'가 NULL인지
-    // 모두 안전하게 확인합니다.
-    if (!GetSafeHwnd())
-    {
-        return; // 'this'가 NULL이거나 윈도우가 파괴된 상태이므로 즉시 종료
-    }
-
-    // 이제 'this'가 유효한 것이 보장되므로 멤버 변수에 접근해도 안전합니다.
-    if (m_bCaptureInProgress) {
+    // 타이머 ID가 1이 아니거나, 이미 캡처가 진행 중이면 반환
+    if (nIDEvent != 1 || m_bCaptureInProgress) {
+        if (nIDEvent != 1) CDialogEx::OnTimer(nIDEvent);
         return;
     }
 
@@ -447,7 +447,7 @@ void CCanClientDlg::DrawImageBufferToCtrl(const uint8_t* data, int width, int he
         drawH = rc.Height(); drawW = static_cast<int>(drawH * srcAR); drawX = (rc.Width() - drawW) / 2; drawY = 0;
     }
 
-    dc.FillRect(rc, &m_brBkg); // Use background brush
+    //dc.FillRect(rc, &m_brBkg); // Use background brush
 
     int oldMode = SetStretchBltMode(dc.GetSafeHdc(), HALFTONE);
     SetBrushOrgEx(dc.GetSafeHdc(), 0, 0, nullptr);
@@ -466,7 +466,7 @@ void CCanClientDlg::ClearPictureControl(CWnd* pWnd)
 {
     if (pWnd && pWnd->GetSafeHwnd()) {
         CClientDC dc(pWnd); CRect rc; pWnd->GetClientRect(&rc);
-        dc.FillRect(rc, &m_brBkg); // Use background brush
+        //dc.FillRect(rc, &m_brBkg); // Use background brush
     }
 }
 

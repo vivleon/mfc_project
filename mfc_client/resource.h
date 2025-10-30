@@ -47,6 +47,7 @@
 #define IDC_SLIDER_GAIN                 1035
 #define IDC_EDIT_GAIN                   1036
 #define IDC_STATIC_TARGET_CAM           1037 // Label showing which camera's params are displayed
+#define IDC_STATIC_SIDE_LABEL           1038
 
 // Next default values for new objects
 // 

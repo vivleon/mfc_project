@@ -144,7 +144,7 @@ void CCameraSettingsDlg::ShowTabControls(int nTab)
 	BOOL bShowBasic = (nTab == 0);
 	GetDlgItem(IDC_STATIC_TOP_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 	GetDlgItem(IDC_COMBO_TOP)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
-	// GetDlgItem(IDC_STATIC_SIDE_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE); // <--- 이전 단계에서 주석 처리됨
+	GetDlgItem(IDC_STATIC_SIDE_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE); 
 	GetDlgItem(IDC_COMBO_SIDE)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 	GetDlgItem(IDC_STATIC_SERVER_IP)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 	GetDlgItem(IDC_EDIT_SERVER_IP)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);

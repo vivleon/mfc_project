@@ -59,7 +59,7 @@ protected:
     afx_msg void OnBnClickedBtnSettings();
     afx_msg LRESULT OnCaptureComplete(WPARAM wParam, LPARAM lParam);
     afx_msg void OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult); // List double-click
-    afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor); // Dark Mode UI
+    //afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor); // Dark Mode UI
     DECLARE_MESSAGE_MAP()
 
 private:
@@ -70,10 +70,10 @@ private:
     void InitGDIPlus();
     void ShutdownGDIPlus();
 
-    // --- Dark Mode UI ---
-    CBrush m_brBkg;     // Dialog background
-    CBrush m_brList;    // List/Edit background
-    CBrush m_brStatic;  // Static text/groupbox background
+    //// --- Dark Mode UI ---
+    //CBrush m_brBkg;     // Dialog background
+    //CBrush m_brList;    // List/Edit background
+    //CBrush m_brStatic;  // Static text/groupbox background
 
     // --- Pylon Cameras ---
     Pylon::DeviceInfoList_t m_availableDevices;
