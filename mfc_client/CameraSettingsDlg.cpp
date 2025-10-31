@@ -118,7 +118,9 @@ void CCameraSettingsDlg::PopulateComboBoxes()
 CString CCameraSettingsDlg::GetDeviceString(const Pylon::CDeviceInfo& dev)
 {
 	CString str;
-	str.Format(_T("%s (%s)"), CString(dev.GetFriendlyName().c_str()), CString(dev.GetSerialNumber().c_str()));
+	str.Format(_T("%s (%s)"),
+		(LPCTSTR)CString(dev.GetFriendlyName().c_str()),
+		(LPCTSTR)CString(dev.GetSerialNumber().c_str()));
 	return str;
 }
 
@@ -159,17 +161,20 @@ void CCameraSettingsDlg::ShowTabControls(int nTab)
 	// Show/Hide Advanced Controls
 	BOOL bShowAdv = (nTab == 1);
 	m_groupAdvSettings.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
+
+	// [FIX] 누락된 ID 추가
 	GetDlgItem(IDC_STATIC_FPS)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
+
 	m_sliderFps.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_editFps.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
-	// [FIX] IDD_CAMERA_SETTINGS 리소스의 ID와 일치시킴
+	// [FIX] 누락된 ID 추가
 	GetDlgItem(IDC_STATIC_EXPOSURE)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
 	m_sliderExposure.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_editExposure.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
-	// [FIX] IDD_CAMERA_SETTINGS 리소스의 ID와 일치시킴
+	// [FIX] 누락된 ID 추가
 	GetDlgItem(IDC_STATIC_GAIN)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
 	m_sliderGain.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
@@ -194,23 +199,22 @@ void CCameraSettingsDlg::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollB
 	CSliderCtrl* pSlider = reinterpret_cast<CSliderCtrl*>(pScrollBar);
 	double minVal = 0, maxVal = 0;
 
-	// Determine which slider moved and update corresponding edit box
 	if (pSlider == &m_sliderFps) {
-		UpdateSliderRange<double>(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "AcquisitionFrameRate", m_sliderFps, m_editFps); // <--- 이전 단계에서 수정됨
-		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "AcquisitionFrameRate", minVal); // Ensure range is correct
-		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "AcquisitionFrameRate", maxVal, true); // Get actual max
+		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "AcquisitionFrameRate", minVal);
+		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "AcquisitionFrameRate", maxVal, true);
+		maxVal = min(maxVal, 500.0); // [수정] 가용 최대치 강제
 		UpdateEditFromSlider(m_sliderFps, m_editFps, minVal, maxVal, _T("%.1f"));
 	}
 	else if (pSlider == &m_sliderExposure) {
-		UpdateSliderRange<double>(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "ExposureTime", m_sliderExposure, m_editExposure); // <--- 이전 단계에서 수정됨
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "ExposureTime", minVal);
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "ExposureTime", maxVal, true);
-		UpdateEditFromSlider(m_sliderExposure, m_editExposure, minVal, maxVal, _T("%.0f")); // Exposure often integer microseconds
+		maxVal = min(maxVal, 30000.0); // [수정] 가용 최대치 강제 (30ms)
+		UpdateEditFromSlider(m_sliderExposure, m_editExposure, minVal, maxVal, _T("%.0f"));
 	}
 	else if (pSlider == &m_sliderGain) {
-		UpdateSliderRange<double>(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "Gain", m_sliderGain, m_editGain); // <--- 이전 단계에서 수정됨
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "Gain", minVal);
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "Gain", maxVal, true);
+		maxVal = min(maxVal, 48.0); // [수정] 가용 최대치 강제 (48dB)
 		UpdateEditFromSlider(m_sliderGain, m_editGain, minVal, maxVal, _T("%.1f"));
 	}
 
@@ -362,7 +366,7 @@ bool CCameraSettingsDlg::GetPylonValue(Pylon::CInstantCamera* pCam, const char* 
 		// Add more types as needed (e.g., CEnumerationParameter)
 
 	}
-	catch (const GenericException& e) {
+	catch (const GenericException& /*e*/) {
 		// Log error e.GetDescription()
 		return false;
 	}
@@ -379,25 +383,55 @@ void CCameraSettingsDlg::UpdateSliderRange(Pylon::CInstantCamera* pCam, const ch
 		if constexpr (std::is_same_v<TParam, double> || std::is_same_v<TParam, float>) {
 			CFloatParameter param(nodemap, paramName);
 			if (param.IsValid() && IsReadable(param)) {
+
+				// [수정] 가용 범위 (Sane Max)를 정의합니다.
+				const double SANE_MAX_FPS = 500.0;      // 최대 500 FPS
+				const double SANE_MAX_EXPOSURE = 30000.0; // 최대 30ms (30000 us)
+				const double SANE_MAX_GAIN = 48.0;        // 최대 48 dB (PylonView 기본값 근처)
+
 				double minVal = param.GetMin();
-				double maxVal = param.GetMax();
+				double maxVal = param.GetMax(); // 카메라의 실제 최대치 (e.g., 500000)
 				double curVal = param.GetValue();
+				CString sCurVal;
+
+				// [수정] 파라미터별로 최대 범위를 강제하고, 형식을 지정합니다.
+				if (strcmp(paramName, "AcquisitionFrameRate") == 0) {
+					maxVal = min(maxVal, SANE_MAX_FPS); // 가용 범위 적용
+					curVal = min(curVal, maxVal); // 현재 값도 최대값 이내로 강제
+					sCurVal.Format(_T("%.1f"), curVal);
+				}
+				else if (strcmp(paramName, "ExposureTime") == 0) {
+					maxVal = min(maxVal, SANE_MAX_EXPOSURE); // 가용 범위 적용
+					curVal = min(curVal, maxVal);
+					sCurVal.Format(_T("%.0f"), curVal);
+				}
+				else if (strcmp(paramName, "Gain") == 0) {
+					maxVal = min(maxVal, SANE_MAX_GAIN); // 가용 범위 적용
+					curVal = min(curVal, maxVal);
+					sCurVal.Format(_T("%.1f"), curVal);
+				}
+				else {
+					// 다른 Float 값이 있다면 기본 형식 사용
+					sCurVal.Format(_T("%.1f"), curVal);
+				}
+
+
 				// Map double range to slider int range (e.g., 0-1000)
 				int sliderMin = 0;
 				int sliderMax = slider.GetRangeMax(); // Use existing max unless it's 0
 				if (sliderMax == 0) sliderMax = 1000;
 				slider.SetRange(sliderMin, sliderMax);
+
 				if (maxVal > minVal) { // Avoid division by zero
+					// [수정] 가용 범위가 적용된 curVal과 maxVal을 사용
 					int sliderPos = static_cast<int>(((curVal - minVal) / (maxVal - minVal)) * sliderMax);
 					slider.SetPos(sliderPos);
 				}
-				else { slider.SetPos(sliderMin); }
+				else {
+					slider.SetPos(sliderMin);
+				}
 
-				CString sCurVal;
-				// Determine format based on parameter name
-				if (strcmp(paramName, "ExposureTime") == 0) sCurVal.Format(_T("%.0f"), curVal);
-				else sCurVal.Format(_T("%.1f"), curVal);
-				edit.SetWindowText(sCurVal);
+				edit.SetWindowText(sCurVal); // [수정] 가용 범위가 적용된 현재 값으로 설정
 			}
 		}
 		else if constexpr (std::is_same_v<TParam, int64_t> || std::is_same_v<TParam, int>) {
@@ -427,7 +461,7 @@ void CCameraSettingsDlg::UpdateSliderRange(Pylon::CInstantCamera* pCam, const ch
 			}
 		}
 	}
-	catch (const GenericException& e) {
+	catch (const GenericException& /*e*/) {
 		// Parameter might not exist or be of the wrong type
 		edit.SetWindowText(_T("N/A"));
 		slider.EnableWindow(FALSE);
@@ -437,7 +471,6 @@ void CCameraSettingsDlg::UpdateSliderRange(Pylon::CInstantCamera* pCam, const ch
 		slider.EnableWindow(FALSE);
 	}
 }
-
 
 // --- Slider/Edit Update Helpers ---
 bool CCameraSettingsDlg::UpdateEditFromSlider(CSliderCtrl& slider, CEdit& edit, double minVal, double maxVal, CString format)

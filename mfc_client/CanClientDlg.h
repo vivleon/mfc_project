@@ -21,6 +21,9 @@
 #include <gdiplus.h>
 #pragma comment (lib,"gdiplus.lib")
 
+
+#define WM_APP_POSTINIT (WM_APP + 1)
+
 using namespace Pylon;
 
 // --- Forward Declarations ---
@@ -63,6 +66,7 @@ protected:
     afx_msg LRESULT OnCaptureComplete(WPARAM wParam, LPARAM lParam);
     afx_msg void OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult); // List double-click
     // afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor); // [UI] 제거
+    afx_msg LRESULT OnPostInit(WPARAM wParam, LPARAM lParam);
     DECLARE_MESSAGE_MAP()
 
 private:

@@ -32,6 +32,15 @@ CCanClientApp theApp;
 
 BOOL CCanClientApp::InitInstance()
 {
+    // [수정] PylonInitialize()를 다이얼로그 생성 *전에* 호출
+    try {
+        Pylon::PylonInitialize();
+    }
+    catch (const Pylon::GenericException& e) {
+        AfxMessageBox(CString(L"Pylon 초기화 실패: ") + CString(e.GetDescription()));
+        return FALSE; // 프로그램 시작 실패
+    }
+
     INITCOMMONCONTROLSEX InitCtrls;
     InitCtrls.dwSize = sizeof(InitCtrls);
     InitCtrls.dwICC = ICC_WIN95_CLASSES;
@@ -78,6 +87,12 @@ BOOL CCanClientApp::InitInstance()
     return FALSE;
 }
 
+// [수정] 아래 함수를 CCanClientApp::InitInstance 함수 뒤에 추가합니다.
+int CCanClientApp::ExitInstance()
+{
+    Pylon::PylonTerminate(); // 프로그램 종료 시 Pylon 종료
+    return CWinApp::ExitInstance();
+}
 
 // [FIX] LoadAppSettings 함수 구현 (CanClientDlg.cpp에서 이동됨)
 void CCanClientApp::LoadAppSettings(CCanClientDlg* pDlg)
@@ -100,22 +115,24 @@ void CCanClientApp::LoadAppSettings(CCanClientDlg* pDlg)
     pDlg->m_dSideExposure = _ttof(GetProfileString(_T("CameraParams"), _T("SideExposure"), _T("-1.0")));
     pDlg->m_dSideGain = _ttof(GetProfileString(_T("CameraParams"), _T("SideGain"), _T("-1.0")));
 
-    // 비정상적인 값(너무 크거나 0)을 불러왔을 경우 -1.0(기본값)으로 리셋
-    const double MAX_EXPOSURE = 1000000.0; // 1초
-    const double MAX_FPS = 500.0;
-    const double MAX_GAIN = 100.0;
+    // [수정] 비정상적인 값을 불러왔을 경우 -1.0(기본값)으로 리셋
+        // 100ms 타이머에 맞게 최대 노출값을 90ms (90000)로 제한합니다.
+    const double MAX_EXPOSURE = 90000.0; // 90ms (UI 멈춤 방지)
+    const double MAX_FPS = 500.0; // 500 FPS 이상은 비정상으로 간주
+    const double MAX_GAIN = 100.0; // 100 dB 이상은 비정상으로 간주
 
-    if (pDlg->m_dTopExposure > MAX_EXPOSURE || pDlg->m_dTopExposure == 0) pDlg->m_dTopExposure = DEFAULT_PARAM;
-    if (pDlg->m_dTopFps > MAX_FPS || pDlg->m_dTopFps == 0) pDlg->m_dTopFps = DEFAULT_PARAM;
-    if (pDlg->m_dTopGain > MAX_GAIN || pDlg->m_dTopGain == 0) pDlg->m_dTopGain = DEFAULT_PARAM;
+    // [수정] 0 대신 DEFAULT_PARAM(-1.0)보다 작은지 비교 (0은 유효한 값이므로)
+    if (pDlg->m_dTopExposure > MAX_EXPOSURE || pDlg->m_dTopExposure < DEFAULT_PARAM) pDlg->m_dTopExposure = DEFAULT_PARAM;
+    if (pDlg->m_dTopFps > MAX_FPS || pDlg->m_dTopFps < DEFAULT_PARAM) pDlg->m_dTopFps = DEFAULT_PARAM;
+    if (pDlg->m_dTopGain > MAX_GAIN || pDlg->m_dTopGain < DEFAULT_PARAM) pDlg->m_dTopGain = DEFAULT_PARAM;
 
-    if (pDlg->m_dSideExposure > MAX_EXPOSURE || pDlg->m_dSideExposure == 0) pDlg->m_dSideExposure = DEFAULT_PARAM;
-    if (pDlg->m_dSideFps > MAX_FPS || pDlg->m_dSideFps == 0) pDlg->m_dSideFps = DEFAULT_PARAM;
-    if (pDlg->m_dSideGain > MAX_GAIN || pDlg->m_dSideGain == 0) pDlg->m_dSideGain = DEFAULT_PARAM;
+    if (pDlg->m_dSideExposure > MAX_EXPOSURE || pDlg->m_dSideExposure < DEFAULT_PARAM) pDlg->m_dSideExposure = DEFAULT_PARAM;
+    if (pDlg->m_dSideFps > MAX_FPS || pDlg->m_dSideFps < DEFAULT_PARAM) pDlg->m_dSideFps = DEFAULT_PARAM;
+    if (pDlg->m_dSideGain > MAX_GAIN || pDlg->m_dSideGain < DEFAULT_PARAM) pDlg->m_dSideGain = DEFAULT_PARAM;
 }
 
-// [FIX] SaveAppSettings 함수 구현 (CanClientDlg.cpp에서 이동됨)
-void CCanClientApp::SaveAppSettings(CCanClientDlg* pDlg)
+// [FIX] SaveAppSettings 함수 구현(CanClientDlg.cpp에서 이동됨)
+void CCanClientApp::SaveAppSettings(CCanClientDlg * pDlg)
 {
     if (!pDlg) return;
 

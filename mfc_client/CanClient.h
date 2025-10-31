@@ -7,6 +7,7 @@
 #endif
 
 #include "resource.h"		// 주 기호입니다.
+#include <pylon/PylonIncludes.h>
 
 // [FIX] CCanClientDlg 클래스를 미리 선언합니다. (순환 참조 방지)
 class CCanClientDlg;
@@ -23,8 +24,7 @@ public:
 public:
 	virtual BOOL InitInstance();
 
-	// [FIX] 설정 Load/Save 함수를 App 클래스로 이동
-public:
+	virtual int ExitInstance();
 	void LoadAppSettings(CCanClientDlg* pDlg);
 	void SaveAppSettings(CCanClientDlg* pDlg);
 
