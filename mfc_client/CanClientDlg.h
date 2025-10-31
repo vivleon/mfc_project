@@ -65,8 +65,13 @@ protected:
     afx_msg void OnBnClickedBtnSettings();
     afx_msg LRESULT OnCaptureComplete(WPARAM wParam, LPARAM lParam);
     afx_msg void OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult); // List double-click
-    // afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor); // [UI] 제거
     afx_msg LRESULT OnPostInit(WPARAM wParam, LPARAM lParam);
+
+    // [NEW] 신규 기능 핸들러
+    afx_msg HBRUSH OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor); // 불량 결과 빨간색 표시
+    afx_msg void OnBnClickedBtnExportHistory(); // 이력 내보내기
+    afx_msg void OnBnClickedCheckMotion(); // [FIX] 모션 캡처 무한 루프 방지용
+
     DECLARE_MESSAGE_MAP()
 
 private:
@@ -113,6 +118,7 @@ private:
     CListCtrl m_historyList;
     std::vector<InspectionResult> m_history;
     LONG m_productCounter;
+    CBrush m_brushRed; // [NEW] 불량 결과 표시용 브러시
 
     // --- Helper Functions ---
     void DrawImageBufferToCtrl(const uint8_t* data, int width, int height, CWnd* pWnd);
@@ -125,6 +131,10 @@ private:
     void UpdateStatistics();
     void LoadHistoryFromFile(); // [FIX] 주석 해제
     void SaveHistoryToFile(); // [FIX] 주석 해제
+
+    // [FIX] CSV 파싱 헬퍼 선언 추가 (컴파일 오류 수정)
+    void ProcessHistoryLine(CString line, long& maxId);
+
     CString GenerateProductId();
     CString GetCurrentTimestamp();
     bool ParseJsonResponse(const std::string& jsonStr, InspectionResult& result);
@@ -132,6 +142,9 @@ private:
     bool OpenAssignedCameras();
     void CloseAllCameras();
     void AddLog(const CString& msg);
+
+    // [NEW] 로컬 이미지 저장을 위한 헬퍼
+    void SaveImageLocally(const cv::Mat& frame, CString role, CString productId);
 
     // [FIX] 설정 변수들을 App 클래스에서 접근할 수 있도록 Public으로 이동
 public:

@@ -6,6 +6,9 @@
 #include <fstream>
 #include "CameraSettingsDlg.h"
 
+// [NEW] 로컬 폴더 생성
+#include <shlobj.h> 
+#pragma comment(lib, "shell32.lib") // for SHCreateDirectoryEx
 
 // JSON
 #include <nlohmann/json.hpp>
@@ -17,6 +20,8 @@ using namespace GenApi;
 
 // OpenCV
 #include <opencv2/opencv.hpp>
+#include <opencv2/imgcodecs.hpp> // [NEW] for cv::imwrite
+
 #ifdef _DEBUG
 #pragma comment(lib, "opencv_world4120d.lib") // (버전에 맞게 수정)
 #else
@@ -29,6 +34,10 @@ using namespace cv;
 // GDI+ Token은 CanClientDlg 멤버(m_gdiplusToken)로 이동
 
 #define WM_CAPTURE_COMPLETE (WM_USER + 100)
+
+// [신규] 리소스 ID (resource.h에서 가져옴)
+#define IDC_BTN_EXPORT_HISTORY 1039
+
 
 // UTF-8 -> CString
 static CString Utf8ToCStr(const std::string& s)
@@ -53,6 +62,10 @@ BEGIN_MESSAGE_MAP(CCanClientDlg, CDialogEx)
     ON_WM_DESTROY()
     ON_MESSAGE(WM_APP_POSTINIT, &CCanClientDlg::OnPostInit) // <-- 추가
     ON_WM_TIMER()
+    // [NEW] 신규 기능 핸들러 매핑
+    ON_WM_CTLCOLOR()
+    ON_BN_CLICKED(IDC_BTN_EXPORT_HISTORY, &CCanClientDlg::OnBnClickedBtnExportHistory) // [수정] ID 1039
+    ON_BN_CLICKED(IDC_CHECK_MOTION, &CCanClientDlg::OnBnClickedCheckMotion) // [FIX] 무한 루프 수정
 END_MESSAGE_MAP()
 
 // --- Constructor ---
@@ -78,12 +91,15 @@ CCanClientDlg::CCanClientDlg(CWnd* pParent)
     , m_dSideExposure(-1.0)
     , m_dSideGain(-1.0)
 {
+    // [NEW] 불량 알림용 빨간색 브러시 생성 (연한 빨강)
+    m_brushRed.CreateSolidBrush(RGB(255, 220, 220));
 }
 
 // --- Destructor ---
 CCanClientDlg::~CCanClientDlg() noexcept
 {
-    // [FIX] 브러시 관련 코드 모두 제거
+    // [NEW] 브러시 리소스 해제
+    m_brushRed.DeleteObject();
 }
 
 
@@ -239,33 +255,30 @@ void CCanClientDlg::CloseAllCameras()
     catch (...) { /* ignore */ }
     AddLog(L"[INFO] 모든 카메라 닫기 시도 완료.");
 }
-// --- Timer (Preview & Motion Detection) ---
+
+// ========================================================================
+// [FIX] OnTimer 함수 로직 전면 수정 (UI 먹통 버그 수정)
+// ========================================================================
 void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
 {
-    // [FIX] Crash 방지
-    if (!GetSafeHwnd())
+    // [FIX] 부모 클래스의 OnTimer를 *항상* 먼저 호출하여 UI 메시지 큐를 처리합니다.
+    // 이것이 멈춤(Freeze) 현상을 해결하는 핵심입니다.
+    CDialogEx::OnTimer(nIDEvent);
+
+    // 우리의 타이머(ID=1)가 아니면, 여기서 종료
+    if (nIDEvent != 1)
     {
         return;
     }
 
-    // [FIX] 타이머 중복 실행 방지
-    if (nIDEvent == 1 && m_bTimerBusy)
+    // --- ID=1 타이머 로직 ---
+
+    // 캡처 진행 중이거나, 타이머가 이미 바쁘면(이전 작업 미종료) 이번 틱은 무시
+    if (!GetSafeHwnd() || m_bTimerBusy || m_bCaptureInProgress)
     {
         return;
     }
-    if (nIDEvent == 1)
-    {
-        m_bTimerBusy = true;
-        // AddLog(L"[Timer] OnTimer Tick"); // 로그가 너무 많으므로 주석 처리
-    }
-
-    // 타이머 ID가 1이 아니거나, 캡처 진행 중이면 반환
-    if (nIDEvent != 1 || m_bCaptureInProgress) {
-        if (nIDEvent != 1) CDialogEx::OnTimer(nIDEvent);
-
-        if (nIDEvent == 1) m_bTimerBusy = false; // [FIX] 반환 전 플래그 해제
-        return;
-    }
+    m_bTimerBusy = true; // 작업 시작 플래그
 
     UpdateData(TRUE); // m_bMotionDetect 값 업데이트
 
@@ -275,41 +288,29 @@ void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
         cv::Mat currentMatTop, currentMatSide;
 
         if (m_camTop.IsGrabbing()) {
-            // [수정 1] Timeout을 50 (50ms 대기) 에서 0 (대기 없음)으로 변경 -> UI 먹통 해결
             if (m_camTop.RetrieveResult(0, grabTop, TimeoutHandling_Return) && grabTop->GrabSucceeded()) {
                 ConvertPylonBufferToMat(m_pylonImage, grabTop, currentMatTop);
                 DrawImageBufferToCtrl((uint8_t*)m_pylonImage.GetBuffer(), (int)grabTop->GetWidth(), (int)grabTop->GetHeight(), GetDlgItem(IDC_CAM_TOP));
-
                 if (m_bMotionDetect) {
                     bMotionTop = DetectMotion(currentMatTop, _T("TOP"));
                 }
             }
-            else {
-                // [수정 2] FAILED일 때 화면을 지우지 않습니다. (깜빡임/검은화면 방지)
-                // ClearPictureControl(GetDlgItem(IDC_CAM_TOP)); 
-            }
         }
         else {
-            ClearPictureControl(GetDlgItem(IDC_CAM_TOP)); // Grab 안할때는 지웁니다.
+            ClearPictureControl(GetDlgItem(IDC_CAM_TOP));
         }
 
         if (m_camSide.IsGrabbing()) {
-            // [수정 1] Timeout을 50 (50ms 대기) 에서 0 (대기 없음)으로 변경 -> UI 먹통 해결
             if (m_camSide.RetrieveResult(0, grabSide, TimeoutHandling_Return) && grabSide->GrabSucceeded()) {
                 ConvertPylonBufferToMat(m_pylonImage, grabSide, currentMatSide);
                 DrawImageBufferToCtrl((uint8_t*)m_pylonImage.GetBuffer(), (int)grabSide->GetWidth(), (int)grabSide->GetHeight(), GetDlgItem(IDC_CAM_FRONT));
-
                 if (m_bMotionDetect) {
                     bMotionSide = DetectMotion(currentMatSide, _T("SIDE"));
                 }
             }
-            else {
-                // [수정 2] FAILED일 때 화면을 지우지 않습니다. (깜빡임/검은화면 방지)
-                // ClearPictureControl(GetDlgItem(IDC_CAM_FRONT));
-            }
         }
         else {
-            ClearPictureControl(GetDlgItem(IDC_CAM_FRONT)); // Grab 안할때는 지웁니다.
+            ClearPictureControl(GetDlgItem(IDC_CAM_FRONT));
         }
 
         if (m_bMotionDetect && (bMotionTop || bMotionSide)) {
@@ -317,7 +318,7 @@ void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
             TriggerCapture(m_camTop.IsGrabbing(), m_camSide.IsGrabbing());
         }
     }
-    catch (const GenericException& e) { // [수정] 예외 타입을 명시적으로 잡아줍니다.
+    catch (const GenericException& e) {
         CString msg(e.GetDescription());
         AddLog(L"[Timer] OnTimer CATCH EXCEPTION! " + msg);
     }
@@ -325,13 +326,7 @@ void CCanClientDlg::OnTimer(UINT_PTR nIDEvent)
         AddLog(L"[Timer] OnTimer CATCH UNKNOWN EXCEPTION!");
     }
 
-    CDialogEx::OnTimer(nIDEvent);
-
-    // [FIX] 모든 작업 후 플래그 해제
-    if (nIDEvent == 1)
-    {
-        m_bTimerBusy = false;
-    }
+    m_bTimerBusy = false; // 작업 완료 플래그
 }
 
 
@@ -443,13 +438,41 @@ void CCanClientDlg::OnBnClickedBtnStart()
     TriggerCapture(m_camTop.IsOpen(), m_camSide.IsOpen());
 }
 
+// ========================================================================
+// [NEW] 모션 감지 체크박스 클릭 시 (무한 루프 방지)
+// ========================================================================
+void CCanClientDlg::OnBnClickedCheckMotion()
+{
+    UpdateData(TRUE); // m_bMotionDetect 값 갱신
+
+    if (m_bMotionDetect)
+    {
+        // 모션 감지 켬 -> 수동 시작 버튼 비활성화
+        GetDlgItem(IDC_BTN_START)->EnableWindow(FALSE);
+        AddLog(L"[INFO] 모션 감지 시작.");
+    }
+    else
+    {
+        // 모션 감지 끔 -> 수동 시작 버튼 활성화 (캡처 중이 아닐 때만)
+        if (!m_bCaptureInProgress)
+        {
+            GetDlgItem(IDC_BTN_START)->EnableWindow(TRUE);
+        }
+        AddLog(L"[INFO] 모션 감지 중지.");
+    }
+}
+
+
+// ========================================================================
+// [FIX] TriggerCapture 수정 (체크박스 제어 제거)
+// ========================================================================
 void CCanClientDlg::TriggerCapture(bool bUseTop, bool bUseSide)
 {
     if (!bUseTop && !bUseSide) { AddLog(L"[ERROR] 캡처할 카메라 없음."); return; }
 
     m_bCaptureInProgress = true;
     GetDlgItem(IDC_BTN_START)->EnableWindow(FALSE);
-    m_checkMotionDetect.EnableWindow(FALSE);
+    // [FIX] m_checkMotionDetect->EnableWindow(FALSE); 제거 (무한 루프 원인)
     GetDlgItem(IDC_BTN_SETTINGS)->EnableWindow(FALSE);
 
     if (m_evtShutdown) ResetEvent(m_evtShutdown); // Reset before starting
@@ -461,40 +484,76 @@ void CCanClientDlg::TriggerCapture(bool bUseTop, bool bUseSide)
         // Re-enable UI if thread failed to start
         m_bCaptureInProgress = false;
         if (!m_bMotionDetect) GetDlgItem(IDC_BTN_START)->EnableWindow(TRUE);
-        m_checkMotionDetect.EnableWindow(TRUE);
+        // [FIX] m_checkMotionDetect->EnableWindow(TRUE); 제거
         GetDlgItem(IDC_BTN_SETTINGS)->EnableWindow(TRUE);
         delete pParams; // Clean up params
     }
 }
 
+// ========================================================================
+// [FIX] OnCaptureComplete 수정 (타이머 재시작 로직 추가)
+// ========================================================================
 LRESULT CCanClientDlg::OnCaptureComplete(WPARAM wParam, LPARAM lParam)
 {
     m_bCaptureInProgress = false;
     m_pCaptureThread = nullptr; // Clear thread pointer
-    UpdateData(TRUE);
-    if (!m_bMotionDetect) { GetDlgItem(IDC_BTN_START)->EnableWindow(TRUE); }
-    m_checkMotionDetect.EnableWindow(TRUE);
+    UpdateData(TRUE); // m_bMotionDetect 최신 상태 확인
+
+    // [FIX] 모션 감지가 켜져있으면 수동 시작 버튼은 계속 비활성화 상태 유지
+    if (!m_bMotionDetect) {
+        GetDlgItem(IDC_BTN_START)->EnableWindow(TRUE);
+    }
+    // [FIX] m_checkMotionDetect->EnableWindow(TRUE); 제거 (무한 루프 원인)
     GetDlgItem(IDC_BTN_SETTINGS)->EnableWindow(TRUE);
     AddLog(L"[INFO] 캡처/전송 작업 완료.");
 
     InspectionResult* pResult = (InspectionResult*)lParam;
-    if (pResult) {
-        if (pResult->defectType == _T("CAPTURE_FAIL")) { AddLog(L"[ERROR] 카메라 캡처 실패."); }
-        else { UpdateCurrentResult(*pResult); AddToHistory(*pResult); AddLog(L"[SUCCESS] 검사 완료 및 결과 표시"); }
-        delete pResult;
+
+    // pResult가 NULL이면(치명적 오류) 아무것도 하지 않고 반환
+    if (!pResult) {
+        AddLog(L"[FATAL] OnCaptureComplete pResult가 NULL입니다.");
+        if (wParam != 0 && wParam != 1) { delete[](char*)wParam; } // pStr 메모리 누수 방지
+        goto CaptureCompleteEnd;
     }
-    else {
-        InspectionResult errResult;
-        errResult.productId = GenerateProductId();
-        errResult.timestamp = GetCurrentTimestamp();
-        errResult.defectType = _T("에러");
-        errResult.defectDetail = (wParam == 0) ? _T("서버 응답 없음") : Utf8ToCStr((char*)wParam);
-        UpdateCurrentResult(errResult); AddToHistory(errResult);
-        if (wParam != 0) { delete[](char*)wParam; }
-        AddLog(L"[ERROR] 서버 응답 처리 실패.");
+
+    // wParam == 0: CAPTURE_FAIL 또는 전송실패
+    if (wParam == 0)
+    {
+        // pResult->defectType은 스레드에서 "CAPTURE_FAIL" 또는 "전송실패"로 이미 채워져 있음
+        AddLog(L"[ERROR] 캡처 또는 전송 실패.");
+    }
+    // wParam == 1: 파싱 성공
+    else if (wParam == 1)
+    {
+        AddLog(L"[SUCCESS] 서버 응답 파싱 성공.");
+        // pResult에 ID, Time, DefectType, DefectDetail이 모두 채워져 있음
+    }
+    // wParam != 0 and != 1: 파싱 실패 (wParam = pStr)
+    else
+    {
+        AddLog(L"[ERROR] 서버 응답 파싱 실패.");
+        // pResult에 ID, Time만 있음. pStr(wParam)로 나머지 채우기
+        pResult->defectType = _T("파싱오류");
+        pResult->defectDetail = Utf8ToCStr((char*)wParam);
+        delete[](char*)wParam; // pStr 메모리 해제
+    }
+
+    // [수정] 모든 분기(성공, 캡처실패, 파싱실패)에서 UI 갱신 및 이력 추가
+    UpdateCurrentResult(*pResult);
+    AddToHistory(*pResult);
+
+    // pResult 메모리 해제
+    delete pResult;
+
+CaptureCompleteEnd:
+    // [FIX] 타이머를 메인 스레드(여기)에서 안전하게 재시작
+    if (GetSafeHwnd() && m_timerId == 0) // 타이머가 꺼져있을 때만
+    {
+        m_timerId = SetTimer(1, 100, nullptr);
     }
     return 0;
 }
+
 
 UINT CCanClientDlg::CaptureWorkThread(LPVOID pParam)
 {
@@ -505,85 +564,114 @@ UINT CCanClientDlg::CaptureWorkThread(LPVOID pParam)
     return 0;
 }
 
+// ========================================================================
+// [FIX] ProcessCapture 수정 (ThreadEnd:에서 SetTimer 제거)
+// ========================================================================
 void CCanClientDlg::ProcessCapture(bool bUseTop, bool bUseSide)
 {
     if (m_timerId) { KillTimer(m_timerId); m_timerId = 0; }
+
+    // [수정] 결과 객체와 ID/시간을 스레드 시작 시점에 생성
+    InspectionResult* pResult = new InspectionResult();
+    pResult->productId = GenerateProductId();
+    pResult->timestamp = GetCurrentTimestamp();
 
     try {
         if (WaitForSingleObject(m_evtShutdown, 0) == WAIT_OBJECT_0) { AddLog(L"[THREAD] 캡처 스레드 종료 (시작 시)."); goto ThreadEnd; }
 
         CGrabResultPtr grabTop, grabSide;
+        cv::Mat frameTop, frameSide;
         std::vector<unsigned char> bufTop, bufSide;
         std::string topResponse, sideResponse;
-        bool topCaptureSuccess = false;
-        bool sideCaptureSuccess = false;
+        bool bTopSentOK = false;
 
-        // Capture TOP
+        // --- 1. Capture TOP ---
         if (bUseTop && m_camTop.IsGrabbing()) {
             if (m_camTop.RetrieveResult(800, grabTop, TimeoutHandling_ThrowException) && grabTop->GrabSucceeded()) {
-                CPylonImage imgTop; m_converter.Convert(imgTop, grabTop);
-                cv::Mat frameTop((int)grabTop->GetHeight(), (int)grabTop->GetWidth(), CV_8UC3, (void*)imgTop.GetBuffer());
+                CPylonImage imgTop;
+                m_converter.Convert(imgTop, grabTop);
+                frameTop = cv::Mat((int)grabTop->GetHeight(), (int)grabTop->GetWidth(), CV_8UC3, (void*)imgTop.GetBuffer()).clone();
+                SaveImageLocally(frameTop, _T("TOP"), pResult->productId);
+
                 std::vector<int> params = { cv::IMWRITE_JPEG_QUALITY, 90 };
                 cv::imencode(".jpg", frameTop, bufTop, params);
-                SendImageToServer(bufTop, _T("TOP"), topResponse);
-                topCaptureSuccess = !bufTop.empty();
+
+                // [수정] 서버 전송 실패 시 pResult에 "전송실패" 기록
+                if (!SendImageToServer(bufTop, _T("TOP"), topResponse)) {
+                    goto CaptureFail_Network;
+                }
+                bTopSentOK = true;
             }
-            else { AddLog(L"[WARNING] TOP 카메라 캡처 실패 (RetrieveResult)"); }
+            else {
+                AddLog(L"[WARNING] TOP 카메라 캡처 실패 (RetrieveResult)");
+                goto CaptureFail_Grab; // TOP 캡처 실패
+            }
+        }
+        else {
+            AddLog(L"[WARNING] TOP 카메라가 사용 설정되지 않았거나 Grabbing 상태가 아님.");
+            goto CaptureFail_Grab; // TOP 캡처 실패
         }
 
         if (WaitForSingleObject(m_evtShutdown, 0) == WAIT_OBJECT_0) { AddLog(L"[THREAD] 캡처 스레드 종료 (TOP 캡처 후)."); goto ThreadEnd; }
 
-        // Capture SIDE
+        // --- 2. Capture SIDE ---
         if (bUseSide && m_camSide.IsGrabbing()) {
             if (m_camSide.RetrieveResult(800, grabSide, TimeoutHandling_ThrowException) && grabSide->GrabSucceeded()) {
-                CPylonImage imgSide; m_converter.Convert(imgSide, grabSide);
-                cv::Mat frameSide((int)grabSide->GetHeight(), (int)grabSide->GetWidth(), CV_8UC3, (void*)imgSide.GetBuffer());
+                CPylonImage imgSide;
+                m_converter.Convert(imgSide, grabSide);
+                frameSide = cv::Mat((int)grabSide->GetHeight(), (int)grabSide->GetWidth(), CV_8UC3, (void*)imgSide.GetBuffer()).clone();
+                SaveImageLocally(frameSide, _T("SIDE"), pResult->productId);
+
                 std::vector<int> params = { cv::IMWRITE_JPEG_QUALITY, 90 };
                 cv::imencode(".jpg", frameSide, bufSide, params);
-                SendImageToServer(bufSide, _T("SIDE"), sideResponse);
-                sideCaptureSuccess = !bufSide.empty();
-
-                InspectionResult* pResult = new InspectionResult();
-                pResult->productId = GenerateProductId();
-                pResult->timestamp = GetCurrentTimestamp();
-                if (ParseJsonResponse(sideResponse, *pResult)) { if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 1, (LPARAM)pResult); }
-                else { char* pStr = new char[sideResponse.length() + 1]; strcpy_s(pStr, sideResponse.length() + 1, sideResponse.c_str()); if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, (WPARAM)pStr, (LPARAM)pResult); }
-                goto ThreadEnd;
-
+                SendImageToServer(bufSide, _T("SIDE"), sideResponse); // sideResponse는 무시, 실패해도 됨
             }
-            else { AddLog(L"[WARNING] SIDE 카메라 캡처 실패 (RetrieveResult)"); goto CaptureFail; }
+            else {
+                AddLog(L"[WARNING] SIDE 카메라 캡처 실패 (RetrieveResult) - 무시하고 계속");
+            }
         }
-        else if (bUseTop && !bUseSide) { // Only TOP
-            InspectionResult* pResult = new InspectionResult();
-            pResult->productId = GenerateProductId();
-            pResult->timestamp = GetCurrentTimestamp();
-            if (ParseJsonResponse(topResponse, *pResult)) { if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 1, (LPARAM)pResult); }
-            else { char* pStr = new char[topResponse.length() + 1]; strcpy_s(pStr, topResponse.length() + 1, topResponse.c_str()); if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, (WPARAM)pStr, (LPARAM)pResult); }
-            goto ThreadEnd;
+
+        // --- 3. Process Result (Based on TOP Response) ---
+        if (ParseJsonResponse(topResponse, *pResult)) {
+            // 파싱 성공 (e.g., {"result":"정상"} or {"result":"에러",...})
+            if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 1, (LPARAM)pResult);
         }
         else {
-            goto CaptureFail;
+            // 파싱 실패 (e.g., "서버 응답 없음" or "<html>...</html>")
+            char* pStr = new char[topResponse.length() + 1];
+            strcpy_s(pStr, topResponse.length() + 1, topResponse.c_str());
+            if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, (WPARAM)pStr, (LPARAM)pResult);
         }
+        goto ThreadEnd; // 정상 종료
     }
-    catch (const GenericException& e) { CString msg(e.GetDescription()); AddLog(L"[ERROR] 스레드 카메라 에러: " + msg); goto CaptureFail; }
-    catch (const cv::Exception& cvEx) { CString msg; msg.Format(L"[ERROR] 스레드 OpenCV 에러: %hs", cvEx.what()); AddLog(msg); goto CaptureFail; }
-    catch (...) { AddLog(L"[ERROR] 스레드 알 수 없는 에러."); goto CaptureFail; }
+    catch (const GenericException& e) { CString msg(e.GetDescription()); AddLog(L"[ERROR] 스레드 카메라 에러: " + msg); goto CaptureFail_Grab; }
+    catch (const cv::Exception& cvEx) { CString msg; msg.Format(L"[ERROR] 스레드 OpenCV 에러: %hs", cvEx.what()); AddLog(msg); goto CaptureFail_Grab; }
+    catch (...) { AddLog(L"[ERROR] 스레드 알 수 없는 에러."); goto CaptureFail_Grab; }
 
-CaptureFail:
+CaptureFail_Network:
     {
-        InspectionResult* pResult = new InspectionResult();
+        // [NEW] 서버 전송/연결 실패
+        pResult->defectType = _T("전송실패");
+        pResult->defectDetail = _T("서버 연결/전송 실패");
+        if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 0, (LPARAM)pResult);
+        goto ThreadEnd;
+    }
+CaptureFail_Grab:
+    {
+        // [수정] 카메라 Grab 실패
         pResult->defectType = _T("CAPTURE_FAIL");
-        pResult->productId = GenerateProductId();
-        pResult->timestamp = GetCurrentTimestamp();
+        pResult->defectDetail = _T("카메라 Grab 실패");
         if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 0, (LPARAM)pResult);
     }
 
 ThreadEnd:
-    if (GetSafeHwnd() && ::IsWindow(GetSafeHwnd())) {
-        // [수정] OnPostInit과 동일하게 100ms로 타이머 재시작
-        m_timerId = SetTimer(1, 100, nullptr);
-    }
+    // [FIX] 작업 스레드에서 SetTimer 호출 제거 (UI 먹통 원인)
+    // if (GetSafeHwnd() && ::IsWindow(GetSafeHwnd())) {
+    //     m_timerId = SetTimer(1, 100, nullptr);
+    // }
+    return; // 스레드 종료
 }
+
 
 // --- Network Functions ---
 bool CCanClientDlg::SendImageToServer(const std::vector<unsigned char>& imgBuffer, CString role, std::string& response)
@@ -628,6 +716,47 @@ bool CCanClientDlg::SendImageToServer(const std::vector<unsigned char>& imgBuffe
     return true;
 }
 
+// [NEW] 로컬 이미지 저장 헬퍼 함수
+void CCanClientDlg::SaveImageLocally(const cv::Mat& frame, CString role, CString productId)
+{
+    if (frame.empty() || productId.IsEmpty()) return;
+
+    try
+    {
+        CString folderPath;
+        // [수정] 사용자가 더블클릭 시 미리보기를 제공하는 경로와 일치시킴
+        folderPath = _T("C:\\InspectionImages\\");
+
+        // CString/Windows API를 사용하여 폴더 생성 (재귀적으로 생성)
+        SHCreateDirectoryEx(NULL, folderPath, NULL);
+
+        CString fileName;
+        fileName.Format(_T("%s_%s.jpg"), (LPCTSTR)productId, (LPCTSTR)role);
+        CString filePath = folderPath + fileName;
+
+        // cv::imwrite는 CString을 직접 지원하지 않으므로 std::string으로 변환
+        // 유니코드(CString) -> 멀티바이트(std::string)
+        CT2A ansiPath(filePath);
+        std::string stdPath(ansiPath);
+
+        std::vector<int> params = { cv::IMWRITE_JPEG_QUALITY, 95 };
+        if (cv::imwrite(stdPath, frame, params)) {
+            AddLog(L"[INFO] 로컬 이미지 저장 성공: " + filePath);
+        }
+        else {
+            AddLog(L"[WARNING] 로컬 이미지 저장 실패: " + filePath);
+        }
+    }
+    catch (const cv::Exception& cvEx) {
+        CString msg; msg.Format(L"[ERROR] SaveImageLocally OpenCV 에러: %hs", cvEx.what()); AddLog(msg);
+    }
+    catch (...)
+    {
+        AddLog(L"[ERROR] SaveImageLocally 알 수 없는 에러.");
+    }
+}
+
+
 // [MODIFIED] Local Image Preview Logic
 void CCanClientDlg::OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult)
 {
@@ -637,6 +766,7 @@ void CCanClientDlg::OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult)
         CString productID = m_historyList.GetItemText(pNMItemActivate->iItem, 0);
         AddLog(L"[UI] 이력 더블클릭: " + productID);
 
+        // [수정] SaveImageLocally에서 사용하는 경로와 일치시킴
         CString imgFolderPath = _T("C:\\InspectionImages\\");
         CString pathTop, pathSide;
         pathTop.Format(_T("%s%s_TOP.jpg"), (LPCTSTR)imgFolderPath, (LPCTSTR)productID);
@@ -674,18 +804,58 @@ bool CCanClientDlg::ParseJsonResponse(const std::string& jsonStr, InspectionResu
 }
 
 // --- UI Update Helpers ---
+// ========================================================================
+// [FIX] UpdateCurrentResult 수정 (모션 캡처 중에는 팝업 대신 FlashWindow)
+// ========================================================================
 void CCanClientDlg::UpdateCurrentResult(const InspectionResult& result)
 {
     SetDlgItemText(IDC_STATIC_PRODUCT_ID, result.productId);
     SetDlgItemText(IDC_STATIC_DEFECT_TYPE, result.defectType);
     SetDlgItemText(IDC_STATIC_DEFECT_DETAIL, (result.defectDetail.IsEmpty() || result.defectType == _T("정상")) ? _T("-") : result.defectDetail);
+
+    // [수정] "정상"이 아닌 모든 경우를 불량/오류로 간주
+    bool bIsDefect = (result.defectType != _T("정상") && !result.defectType.IsEmpty());
+
+    // [NEW] 컨트롤 배경색 갱신 요청
+    if (GetDlgItem(IDC_STATIC_DEFECT_TYPE))
+    {
+        GetDlgItem(IDC_STATIC_DEFECT_TYPE)->Invalidate();
+    }
+
+    // [NEW] 불량/오류 알림
+    if (bIsDefect)
+    {
+        UpdateData(TRUE); // m_bMotionDetect 값 갱신
+        if (m_bMotionDetect)
+        {
+            // 모션 캡처 중에는 무한 루프 방지를 위해 팝업 대신 작업 표시줄 깜박임
+            FlashWindow(TRUE);
+        }
+        else
+        {
+            // 수동 캡처 시에는 팝업
+            CString msg;
+            msg.Format(L"!! 검사 오류/불량 감지 !!\n\n제품 ID: %s\n유형: %s\n상세: %s",
+                (LPCTSTR)result.productId,
+                (LPCTSTR)result.defectType,
+                (LPCTSTR)(result.defectDetail.IsEmpty() ? _T("-") : result.defectDetail));
+            AfxMessageBox(msg, MB_ICONWARNING | MB_OK);
+        }
+    }
 }
+
 
 void CCanClientDlg::ClearCurrentResult()
 {
     SetDlgItemText(IDC_STATIC_PRODUCT_ID, _T("-"));
     SetDlgItemText(IDC_STATIC_DEFECT_TYPE, _T("-"));
     SetDlgItemText(IDC_STATIC_DEFECT_DETAIL, _T("-"));
+
+    // [NEW] Clear 시에도 배경색 갱신
+    if (GetDlgItem(IDC_STATIC_DEFECT_TYPE))
+    {
+        GetDlgItem(IDC_STATIC_DEFECT_TYPE)->Invalidate();
+    }
 }
 
 
@@ -697,7 +867,8 @@ void CCanClientDlg::UpdateStatistics()
         if (rec.timestamp.Left(10) == today) {
             total++;
             if (rec.defectType == _T("정상")) normal++;
-            else if (rec.defectType != _T("에러") && rec.defectType != _T("파싱오류") && rec.defectType != _T("CAPTURE_FAIL")) defect++;
+            // [FIX] "전송실패"도 불량 통계에서 제외
+            else if (rec.defectType != _T("에러") && rec.defectType != _T("파싱오류") && rec.defectType != _T("CAPTURE_FAIL") && rec.defectType != _T("전송실패")) defect++;
         }
     }
     double ratio = (total > 0) ? (normal * 100.0 / total) : 0.0;
@@ -746,13 +917,24 @@ void CCanClientDlg::SaveHistoryToFile()
     CString folder = _T("C:\\CanClient"); CreateDirectory(folder, NULL);
     CString filePath = folder + _T("\\history.txt");
     CStdioFile file;
-    if (!file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeText)) { AddLog(L"[ERROR] 히스토리 파일 저장 실패: " + filePath); return; }
+    // [수정] CSV 호환을 위해 덮어쓰기 (UTF-16 LE BOM)
+    if (!file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeText)) {
+        AddLog(L"[ERROR] 히스토리 파일 저장 실패: " + filePath);
+        return;
+    }
+    file.Write(L"\xFEFF", 1); // UTF-16 LE BOM
+
     for (const auto& rec : m_history) {
         CString line;
-        line.Format(_T("%s|%s|%s|%s\n"),
+        // [NEW] CSV 호환을 위해 | 대신 , 사용 및 상세 내용의 " 처리
+        CString detail = rec.defectDetail;
+        detail.Replace(_T("\""), _T("\"\"")); // Escape quotes
+        detail.Format(_T("\"%s\""), (LPCTSTR)detail); // Wrap in quotes
+
+        line.Format(_T("%s,%s,%s,%s\n"),
             (LPCTSTR)rec.productId,
             (LPCTSTR)rec.defectType,
-            (LPCTSTR)(rec.defectDetail.IsEmpty() ? _T("-") : rec.defectDetail),
+            (LPCTSTR)detail,
             (LPCTSTR)rec.timestamp);
         file.WriteString(line);
     }
@@ -767,47 +949,31 @@ void CCanClientDlg::LoadHistoryFromFile()
 
     CString filePath = _T("C:\\CanClient\\history.txt");
     CStdioFile file;
+    // [수정] CStdioFile은 BOM을 자동 처리 (읽기 모드)
     if (!file.Open(filePath, CFile::modeRead | CFile::typeText | CFile::shareDenyWrite)) { AddLog(L"[WARNING] 히스토리 파일 읽기 실패: " + filePath); return; }
 
     CString line;
     long maxId = 1011;
 
+    // [수정] BOM 건너뛰기 (첫 줄 읽기)
+    if (file.ReadString(line))
+    {
+        if (line.GetLength() > 0 && line[0] != 0xFEFF) {
+            file.SeekToBegin(); // BOM이 아니면 다시 처음으로
+        }
+        // BOM(이거나 첫 줄)은 읽었으므로, 다음 줄부터 파싱하거나 (BOM이 아니었다면) 첫 줄부터 파싱
+        if (line[0] == 0xFEFF) {
+            // BOM이었으면 이 라인은 비우고 다음 루프부터
+        }
+        else {
+            // BOM이 아니었으면 이 라인부터 파싱
+            ProcessHistoryLine(line, maxId);
+        }
+    }
+
+    // [수정] CSV 호환을 위해 | 대신 ,로 파싱
     while (file.ReadString(line)) {
-        line.Trim(); if (line.IsEmpty()) continue;
-        int cur = 0, count = 0;
-        CString parts[4];
-        while (count < 4) {
-            int next = line.Find(_T('|'), cur);
-            if (next == -1) {
-                if (count == 3) parts[count++] = line.Mid(cur);
-                break;
-            }
-            parts[count++] = line.Mid(cur, next - cur);
-            cur = next + 1;
-        }
-
-        if (count == 4) {
-            InspectionResult rec;
-            rec.productId = parts[0].Trim();
-            rec.defectType = parts[1].Trim();
-            rec.defectDetail = parts[2].Trim();
-            rec.timestamp = parts[3].Trim();
-            if (rec.defectDetail == _T("-")) rec.defectDetail.Empty();
-
-            if (!rec.productId.IsEmpty() && rec.productId.Left(2).CompareNoCase(_T("CK")) == 0) {
-                m_history.push_back(rec);
-                int idx = m_historyList.InsertItem(m_historyList.GetItemCount(), rec.productId);
-                m_historyList.SetItemText(idx, 1, rec.defectType);
-                m_historyList.SetItemText(idx, 2, rec.defectDetail.IsEmpty() ? _T("-") : rec.defectDetail);
-                m_historyList.SetItemText(idx, 3, rec.timestamp);
-
-                CString numStr = rec.productId.Mid(2);
-                long num = _ttol(numStr);
-                if (num > maxId) maxId = num;
-            }
-            else { AddLog(L"[WARNING] 히스토리 로드 중 잘못된 형식의 라인: " + line); }
-        }
-        else { AddLog(L"[WARNING] 히스토리 로드 중 잘못된 구분자 수: " + line); }
+        ProcessHistoryLine(line, maxId);
     }
     m_productCounter = maxId;
     file.Close();
@@ -815,6 +981,87 @@ void CCanClientDlg::LoadHistoryFromFile()
     if (m_historyList.GetItemCount() > 0) m_historyList.EnsureVisible(m_historyList.GetItemCount() - 1, FALSE);
     AddLog(L"[INFO] 히스토리 로드 완료.");
 }
+
+// ========================================================================
+// [FIX] ProcessHistoryLine 정의 (컴파일 오류 수정)
+// ========================================================================
+void CCanClientDlg::ProcessHistoryLine(CString line, long& maxId)
+{
+    line.Trim(); if (line.IsEmpty()) return;
+    int cur = 0, count = 0;
+    CString parts[4];
+
+    // 간단한 CSV 파서 (따옴표 처리)
+    for (int i = 0; i < 4; ++i)
+    {
+        if (cur >= line.GetLength()) break;
+
+        CString token;
+        if (line[cur] == _T('\"')) // 따옴표로 시작
+        {
+            cur++; // " skip
+            int nextQuote = line.Find(_T('\"'), cur);
+            while (nextQuote != -1 && nextQuote + 1 < line.GetLength() && line[nextQuote + 1] == _T('\"')) // "" (이중 따옴표)
+            {
+                nextQuote = line.Find(_T('\"'), nextQuote + 2);
+            }
+
+            if (nextQuote != -1)
+            {
+                token = line.Mid(cur, nextQuote - cur);
+                token.Replace(_T("\"\""), _T("\"")); // "" -> "
+                cur = nextQuote + 1; // " skip
+                if (cur < line.GetLength() && line[cur] == _T(',')) cur++; // , skip
+            }
+            else
+            {
+                // 따옴표가 닫히지 않은 비정상 라인
+                token = line.Mid(cur);
+                cur = line.GetLength();
+            }
+        }
+        else // 따옴표 없음
+        {
+            int nextComma = line.Find(_T(','), cur);
+            if (nextComma == -1)
+            {
+                token = line.Mid(cur);
+                cur = line.GetLength();
+            }
+            else
+            {
+                token = line.Mid(cur, nextComma - cur);
+                cur = nextComma + 1;
+            }
+        }
+        parts[count++] = token;
+    }
+
+
+    if (count == 4) {
+        InspectionResult rec;
+        rec.productId = parts[0].Trim();
+        rec.defectType = parts[1].Trim();
+        rec.defectDetail = parts[2].Trim();
+        rec.timestamp = parts[3].Trim();
+        if (rec.defectDetail == _T("-")) rec.defectDetail.Empty();
+
+        if (!rec.productId.IsEmpty() && rec.productId.Left(2).CompareNoCase(_T("CK")) == 0) {
+            m_history.push_back(rec);
+            int idx = m_historyList.InsertItem(m_historyList.GetItemCount(), rec.productId);
+            m_historyList.SetItemText(idx, 1, rec.defectType);
+            m_historyList.SetItemText(idx, 2, rec.defectDetail.IsEmpty() ? _T("-") : rec.defectDetail);
+            m_historyList.SetItemText(idx, 3, rec.timestamp);
+
+            CString numStr = rec.productId.Mid(2);
+            long num = _ttol(numStr);
+            if (num > maxId) maxId = num;
+        }
+        else { AddLog(L"[WARNING] 히스토리 로드 중 잘못된 형식의 라인: " + line); }
+    }
+    else { AddLog(L"[WARNING] 히스토리 로드 중 잘못된 구분자 수: " + line); }
+}
+
 
 // --- Settings Dialog ---
 // [수정] OnBnClickedBtnSettings 함수 전체 덮어쓰기 (Pylon 충돌 해결)
@@ -865,6 +1112,10 @@ void CCanClientDlg::OnBnClickedBtnSettings()
         bool bReopened = OpenAssignedCameras();
 
         if (bReopened) {
+            // =================================================================
+            // [수정] 요청에 따라 고급 설정 적용 코드 비활성화
+            // =================================================================
+            /*
             if (sAppliedRole == _T("TOP") && m_camTop.IsOpen()) {
                 ApplyAdvancedCameraSettings(m_camTop, dFps, dExposure, dGain);
                 m_dTopFps = dFps; m_dTopExposure = dExposure; m_dTopGain = dGain;
@@ -873,6 +1124,9 @@ void CCanClientDlg::OnBnClickedBtnSettings()
                 ApplyAdvancedCameraSettings(m_camSide, dFps, dExposure, dGain);
                 m_dSideFps = dFps; m_dSideExposure = dExposure; m_dSideGain = dGain;
             }
+            */
+            AddLog(L"[INFO] 고급 카메라 설정 적용 비활성화됨 (사용자 요청).");
+            // =================================================================
         }
         else {
             AfxMessageBox(L"카메라 재연결 실패. 고급 설정이 적용되지 않았을 수 있습니다.");
@@ -1001,8 +1255,13 @@ LRESULT CCanClientDlg::OnPostInit(WPARAM wParam, LPARAM lParam)
         ScanPylonDevices();
         if (!OpenAssignedCameras()) { AddLog(L"[WARNING] 초기 카메라 열기 실패."); }
         else {
-            if (m_camTop.IsOpen()) ApplyAdvancedCameraSettings(m_camTop, m_dTopFps, m_dTopExposure, m_dTopGain);
-            if (m_camSide.IsOpen()) ApplyAdvancedCameraSettings(m_camSide, m_dSideFps, m_dSideExposure, m_dSideGain);
+            // =================================================================
+            // [수정] 요청에 따라 고급 설정 적용 코드 비활성화
+            // =================================================================
+            // if (m_camTop.IsOpen()) ApplyAdvancedCameraSettings(m_camTop, m_dTopFps, m_dTopExposure, m_dTopGain);
+            // if (m_camSide.IsOpen()) ApplyAdvancedCameraSettings(m_camSide, m_dSideFps, m_dSideExposure, m_dSideGain);
+            AddLog(L"[INFO] 초기 고급 카메라 설정 적용 비활성화됨 (사용자 요청).");
+            // =================================================================
         }
         m_converter.OutputPixelFormat = PixelType_BGR8packed;
         m_converter.OutputBitAlignment = OutputBitAlignment_MsbAligned;
@@ -1018,7 +1277,8 @@ LRESULT CCanClientDlg::OnPostInit(WPARAM wParam, LPARAM lParam)
         else
         {
             CString msg;
-            msg.Format(L"[INFO] SetTimer(1, ...) 성공. Timer ID = %u", m_timerId);
+            // [수정] C6328 경고 해결 (%u -> %I64u) (UINT_PTR는 64비트)
+            msg.Format(L"[INFO] SetTimer(1, ...) 성공. Timer ID = %I64u", m_timerId);
             AddLog(msg);
         }
     }
@@ -1026,4 +1286,99 @@ LRESULT CCanClientDlg::OnPostInit(WPARAM wParam, LPARAM lParam)
     catch (...) { AddLog(L"[ERROR] Pylon 초기화 중 알 수 없는 오류."); AfxMessageBox(L"Pylon 초기화 중 알 수 없는 오류 발생."); }
 
     return 0;
+}
+
+
+// ========================================================================
+// [NEW] 신규 기능: 불량 결과 텍스트 배경색 변경
+// ========================================================================
+HBRUSH CCanClientDlg::OnCtlColor(CDC* pDC, CWnd* pWnd, UINT nCtlColor)
+{
+    HBRUSH hbr = CDialogEx::OnCtlColor(pDC, pWnd, nCtlColor);
+
+    // [현재 검사 결과]의 '결함 유형' 컨트롤 ID
+    if (pWnd->GetDlgCtrlID() == IDC_STATIC_DEFECT_TYPE)
+    {
+        CString sText;
+        pWnd->GetWindowText(sText);
+
+        // "정상" 또는 "-" 가 아닐 경우 (즉, 불량일 경우)
+        if (sText != _T("정상") && sText != _T("-") && !sText.IsEmpty())
+        {
+            pDC->SetBkColor(RGB(255, 220, 220)); // 연한 빨강 배경
+            pDC->SetTextColor(RGB(200, 0, 0));   // 진한 빨강 텍스트
+            return (HBRUSH)m_brushRed.GetSafeHandle();
+        }
+    }
+
+    // 그 외에는 기본값 반환
+    return hbr;
+}
+
+// ========================================================================
+// [NEW] 신규 기능: 히스토리 내보내기 (CSV)
+// ========================================================================
+void CCanClientDlg::OnBnClickedBtnExportHistory()
+{
+    // 1. 파일 저장 대화상자 띄우기
+    CString strFilter = _T("CSV 파일 (*.csv)|*.csv|모든 파일 (*.*)|*.*||");
+    CFileDialog dlg(FALSE, // FALSE = 저장
+        _T("csv"),        // 기본 확장자
+        _T("history_export.csv"), // 기본 파일명
+        OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT, // 속성
+        strFilter,        // 필터
+        this);            // 부모 윈도우
+
+    if (dlg.DoModal() != IDOK)
+    {
+        AddLog(L"[INFO] 히스토리 내보내기 취소됨.");
+        return;
+    }
+
+    CString filePath = dlg.GetPathName();
+    CStdioFile file;
+
+    // [수정] 유니코드(UTF-16 LE)로 저장 (BOM 포함)
+    if (!file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeText))
+    {
+        AddLog(L"[ERROR] 히스토리 내보내기 파일 열기 실패: " + filePath);
+        AfxMessageBox(L"파일을 저장할 수 없습니다.");
+        return;
+    }
+
+    // [수정] UTF-16 BOM (Byte Order Mark) 추가 (Excel 호환성)
+    file.Write(L"\xFEFF", 1);
+
+    try
+    {
+        // 2. 헤더 쓰기
+        file.WriteString(L"제품 ID,결함 유형,상세 내용,시간\n");
+
+        // 3. 데이터 쓰기 (m_history 벡터 사용)
+        for (const auto& rec : m_history)
+        {
+            // CSV 형식에 맞게 ,(콤마)가 포함될 수 있는 상세 내용은 ""로 감싸기
+            CString detail = rec.defectDetail;
+            detail.Replace(_T("\""), _T("\"\"")); // " -> ""
+            detail.Format(_T("\"%s\""), (LPCTSTR)detail);
+
+            CString line;
+            line.Format(_T("%s,%s,%s,%s\n"),
+                (LPCTSTR)rec.productId,
+                (LPCTSTR)rec.defectType,
+                (LPCTSTR)detail,
+                (LPCTSTR)rec.timestamp);
+
+            file.WriteString(line);
+        }
+
+        file.Close();
+        AddLog(L"[SUCCESS] 히스토리 내보내기 완료: " + filePath);
+        AfxMessageBox(L"히스토리 내보내기 완료: " + filePath);
+    }
+    catch (CFileException* e)
+    {
+        e->Delete();
+        AddLog(L"[ERROR] 히스토리 내보내기 중 파일 쓰기 오류");
+    }
 }

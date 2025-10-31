@@ -9,10 +9,10 @@
 #define IDD_CANCLIENT_DIALOG            102
 #define IDR_MAINFRAME                   128
 #define IDD_CAMERA_SETTINGS             130
+#define IDC_PIC                         1000
 #define IDC_BTN_START                   1001
 #define IDC_STATIC_STATUS               1002
 #define IDC_CAM_TOP                     1003
-#define IDC_PIC                         1003
 #define IDC_CAM_FRONT                   1004
 #define IDC_STATIC_TOP_LABEL            1005
 #define IDC_STATIC_FRONT_LABEL          1006
@@ -48,6 +48,8 @@
 #define IDC_EDIT_GAIN                   1036
 #define IDC_STATIC_TARGET_CAM           1037
 #define IDC_STATIC_SIDE_LABEL           1038
+#define IDC_BUTTON1                     1038
+#define IDC_BTN_EXPORT_HISTORY          1039
 
 // Next default values for new objects
 // 
@@ -55,7 +57,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NEXT_RESOURCE_VALUE        132
 #define _APS_NEXT_COMMAND_VALUE         32771
-#define _APS_NEXT_CONTROL_VALUE         1038
+#define _APS_NEXT_CONTROL_VALUE         1039
 #define _APS_NEXT_SYMED_VALUE           101
 #endif
 #endif

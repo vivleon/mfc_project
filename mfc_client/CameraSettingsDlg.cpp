@@ -1,4 +1,4 @@
-#include "pch.h"
+ï»¿#include "pch.h"
 #include "CanClient.h"
 #include "afxdialogex.h"
 #include "CameraSettingsDlg.h"
@@ -22,13 +22,30 @@ CCameraSettingsDlg::CCameraSettingsDlg(CWnd* pParent /*=nullptr*/)
 	, m_dExposure(0.0)
 	, m_dGain(0.0)
 	, m_sSelectedCamRole(_T(""))
-	, m_nUploadPort(0) // [FIX 3] º¯¼ö ¼±¾ğÀÌ ¼öÁ¤µÇ¾úÀ¸¹Ç·Î ÃÊ±âÈ­ ¸ñ·Ï¿¡ Ãß°¡
-	, m_nRequestPort(0) // [FIX 3] º¯¼ö ¼±¾ğÀÌ ¼öÁ¤µÇ¾úÀ¸¹Ç·Î ÃÊ±âÈ­ ¸ñ·Ï¿¡ Ãß°¡
+	, m_nUploadPort(0) // [FIX 3] ë³€ìˆ˜ ì„ ì–¸ì´ ìˆ˜ì •ë˜ì—ˆìœ¼ë¯€ë¡œ ì´ˆê¸°í™” ëª©ë¡ì— ì¶”ê°€
+	, m_nRequestPort(0) // [FIX 3] ë³€ìˆ˜ ì„ ì–¸ì´ ìˆ˜ì •ë˜ì—ˆìœ¼ë¯€ë¡œ ì´ˆê¸°í™” ëª©ë¡ì— ì¶”ê°€
 {
 }
 
-CCameraSettingsDlg::~CCameraSettingsDlg() noexcept // [FIX 1] noexcept Ãß°¡
+CCameraSettingsDlg::~CCameraSettingsDlg() noexcept // [FIX 1] noexcept ì¶”ê°€
 {
+	// [ìˆ˜ì •] ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ ë°©ì§€ë¥¼ ìœ„í•´ ì½¤ë³´ë°•ìŠ¤ ItemDataPtr ë©”ëª¨ë¦¬ í•´ì œ
+	// OnBnClickedOkê°€ ì•„ë‹Œ ì†Œë©¸ìì—ì„œ ì²˜ë¦¬í•´ì•¼ ì·¨ì†Œ/ë‹«ê¸° ì‹œì—ë„ í•´ì œë©ë‹ˆë‹¤.
+	try {
+		if (m_comboTop.GetSafeHwnd()) {
+			for (int i = 0; i < m_comboTop.GetCount(); ++i) {
+				delete (CString*)m_comboTop.GetItemDataPtr(i);
+			}
+		}
+		if (m_comboSide.GetSafeHwnd()) {
+			for (int i = 0; i < m_comboSide.GetCount(); ++i) {
+				delete (CString*)m_comboSide.GetItemDataPtr(i);
+			}
+		}
+	}
+	catch (...) {
+		// ì†Œë©¸ìì—ì„œëŠ” ì˜ˆì™¸ë¥¼ ë˜ì§€ì§€ ì•ŠìŠµë‹ˆë‹¤.
+	}
 }
 
 void CCameraSettingsDlg::DoDataExchange(CDataExchange* pDX)
@@ -70,8 +87,8 @@ BOOL CCameraSettingsDlg::OnInitDialog()
 	portStr.Format(_T("%d"), m_nRequestPort); m_editRequestPort.SetWindowText(portStr);
 
 	// --- Initialize Tab Control ---
-	m_tabSettings.InsertItem(0, _T("±âº» ¼³Á¤"));
-	m_tabSettings.InsertItem(1, _T("°í±Ş ¼³Á¤"));
+	m_tabSettings.InsertItem(0, _T("ê¸°ë³¸ ì„¤ì •"));
+	m_tabSettings.InsertItem(1, _T("ê³ ê¸‰ ì„¤ì •(ë¹„í™œì„±í™”)"));
 
 	// --- Initialize Advanced Controls (Initially hidden) ---
 	InitAdvancedControls();
@@ -87,7 +104,7 @@ void CCameraSettingsDlg::PopulateComboBoxes()
 {
 	m_comboTop.ResetContent();
 	m_comboSide.ResetContent();
-	CString strNone = _T("None (»ç¿ë ¾È ÇÔ)");
+	CString strNone = _T("None (ì‚¬ìš© ì•ˆ í•¨)");
 	int idxNoneTop = m_comboTop.AddString(strNone);
 	int idxNoneSide = m_comboSide.AddString(strNone);
 	// Store empty string as item data for "None"
@@ -137,7 +154,7 @@ void CCameraSettingsDlg::InitAdvancedControls()
 	m_sliderFps.EnableWindow(FALSE); m_editFps.EnableWindow(FALSE);
 	m_sliderExposure.EnableWindow(FALSE); m_editExposure.EnableWindow(FALSE);
 	m_sliderGain.EnableWindow(FALSE); m_editGain.EnableWindow(FALSE);
-	m_staticTargetCam.SetWindowText(_T("Ä«¸Ş¶ó ¼±ÅÃ ÇÊ¿ä"));
+	m_staticTargetCam.SetWindowText(_T("ì¹´ë©”ë¼ ì„ íƒ í•„ìš”"));
 }
 
 void CCameraSettingsDlg::ShowTabControls(int nTab)
@@ -147,7 +164,7 @@ void CCameraSettingsDlg::ShowTabControls(int nTab)
 	GetDlgItem(IDC_STATIC_TOP_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 	GetDlgItem(IDC_COMBO_TOP)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 
-	// [FIX] resource.h¿¡ Á¤ÀÇµÈ ID (1038) »ç¿ë
+	// [FIX] resource.hì— ì •ì˜ëœ ID (1038) ì‚¬ìš©
 	GetDlgItem(IDC_STATIC_SIDE_LABEL)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
 
 	GetDlgItem(IDC_COMBO_SIDE)->ShowWindow(bShowBasic ? SW_SHOW : SW_HIDE);
@@ -162,19 +179,19 @@ void CCameraSettingsDlg::ShowTabControls(int nTab)
 	BOOL bShowAdv = (nTab == 1);
 	m_groupAdvSettings.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
-	// [FIX] ´©¶ôµÈ ID Ãß°¡
+	// [FIX] ëˆ„ë½ëœ ID ì¶”ê°€
 	GetDlgItem(IDC_STATIC_FPS)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
 	m_sliderFps.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_editFps.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
-	// [FIX] ´©¶ôµÈ ID Ãß°¡
+	// [FIX] ëˆ„ë½ëœ ID ì¶”ê°€
 	GetDlgItem(IDC_STATIC_EXPOSURE)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
 	m_sliderExposure.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 	m_editExposure.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
-	// [FIX] ´©¶ôµÈ ID Ãß°¡
+	// [FIX] ëˆ„ë½ëœ ID ì¶”ê°€
 	GetDlgItem(IDC_STATIC_GAIN)->ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
 
 	m_sliderGain.ShowWindow(bShowAdv ? SW_SHOW : SW_HIDE);
@@ -202,19 +219,19 @@ void CCameraSettingsDlg::OnHScroll(UINT nSBCode, UINT nPos, CScrollBar* pScrollB
 	if (pSlider == &m_sliderFps) {
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "AcquisitionFrameRate", minVal);
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "AcquisitionFrameRate", maxVal, true);
-		maxVal = min(maxVal, 500.0); // [¼öÁ¤] °¡¿ë ÃÖ´ëÄ¡ °­Á¦
+		maxVal = min(maxVal, 500.0); // [ìˆ˜ì •] ê°€ìš© ìµœëŒ€ì¹˜ ê°•ì œ
 		UpdateEditFromSlider(m_sliderFps, m_editFps, minVal, maxVal, _T("%.1f"));
 	}
 	else if (pSlider == &m_sliderExposure) {
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "ExposureTime", minVal);
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "ExposureTime", maxVal, true);
-		maxVal = min(maxVal, 30000.0); // [¼öÁ¤] °¡¿ë ÃÖ´ëÄ¡ °­Á¦ (30ms)
+		maxVal = min(maxVal, 30000.0); // [ìˆ˜ì •] ê°€ìš© ìµœëŒ€ì¹˜ ê°•ì œ (30ms)
 		UpdateEditFromSlider(m_sliderExposure, m_editExposure, minVal, maxVal, _T("%.0f"));
 	}
 	else if (pSlider == &m_sliderGain) {
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "Gain", minVal);
 		GetPylonValue(GetSelectedCameraForAdvancedSettings(m_sSelectedCamRole), "Gain", maxVal, true);
-		maxVal = min(maxVal, 48.0); // [¼öÁ¤] °¡¿ë ÃÖ´ëÄ¡ °­Á¦ (48dB)
+		maxVal = min(maxVal, 48.0); // [ìˆ˜ì •] ê°€ìš© ìµœëŒ€ì¹˜ ê°•ì œ (48dB)
 		UpdateEditFromSlider(m_sliderGain, m_editGain, minVal, maxVal, _T("%.1f"));
 	}
 
@@ -255,28 +272,28 @@ void CCameraSettingsDlg::LoadCameraParameters()
 	if (pCam && pCam->IsOpen())
 	{
 		m_sSelectedCamRole = role; // Store which camera's params are loaded
-		m_staticTargetCam.SetWindowText(role + _T(" Ä«¸Ş¶ó °í±Ş ¼³Á¤"));
+		m_staticTargetCam.SetWindowText(role + _T(" ì¹´ë©”ë¼ ê³ ê¸‰ ì„¤ì •"));
 		m_groupAdvSettings.EnableWindow(TRUE);
 		m_sliderFps.EnableWindow(TRUE); m_editFps.EnableWindow(TRUE);
 		m_sliderExposure.EnableWindow(TRUE); m_editExposure.EnableWindow(TRUE);
 		m_sliderGain.EnableWindow(TRUE); m_editGain.EnableWindow(TRUE);
 
 		// --- Load FPS ---
-		UpdateSliderRange<double>(pCam, "AcquisitionFrameRate", m_sliderFps, m_editFps); // <--- ÀÌÀü ´Ü°è¿¡¼­ ¼öÁ¤µÊ
+		UpdateSliderRange<double>(pCam, "AcquisitionFrameRate", m_sliderFps, m_editFps); // <--- ì´ì „ ë‹¨ê³„ì—ì„œ ìˆ˜ì •ë¨
 		double currentFps = 0.0;
 		if (GetPylonValue(pCam, "AcquisitionFrameRate", currentFps)) {
 			UpdateSliderFromEdit(m_editFps, m_sliderFps, CFloatParameter(pCam->GetNodeMap(), "AcquisitionFrameRate").GetMin(), CFloatParameter(pCam->GetNodeMap(), "AcquisitionFrameRate").GetMax());
 		}
 
 		// --- Load Exposure ---
-		UpdateSliderRange<double>(pCam, "ExposureTime", m_sliderExposure, m_editExposure); // <--- ÀÌÀü ´Ü°è¿¡¼­ ¼öÁ¤µÊ
+		UpdateSliderRange<double>(pCam, "ExposureTime", m_sliderExposure, m_editExposure); // <--- ì´ì „ ë‹¨ê³„ì—ì„œ ìˆ˜ì •ë¨
 		double currentExposure = 0.0;
 		if (GetPylonValue(pCam, "ExposureTime", currentExposure)) {
 			UpdateSliderFromEdit(m_editExposure, m_sliderExposure, CFloatParameter(pCam->GetNodeMap(), "ExposureTime").GetMin(), CFloatParameter(pCam->GetNodeMap(), "ExposureTime").GetMax());
 		}
 
 		// --- Load Gain ---
-		UpdateSliderRange<double>(pCam, "Gain", m_sliderGain, m_editGain); // <--- ÀÌÀü ´Ü°è¿¡¼­ ¼öÁ¤µÊ
+		UpdateSliderRange<double>(pCam, "Gain", m_sliderGain, m_editGain); // <--- ì´ì „ ë‹¨ê³„ì—ì„œ ìˆ˜ì •ë¨
 		double currentGain = 0.0;
 		if (GetPylonValue(pCam, "Gain", currentGain)) {
 			UpdateSliderFromEdit(m_editGain, m_sliderGain, CFloatParameter(pCam->GetNodeMap(), "Gain").GetMin(), CFloatParameter(pCam->GetNodeMap(), "Gain").GetMax());
@@ -286,7 +303,7 @@ void CCameraSettingsDlg::LoadCameraParameters()
 	{
 		// No camera selected or open, disable controls
 		m_sSelectedCamRole = _T("");
-		m_staticTargetCam.SetWindowText(_T("¿¬°áµÈ Ä«¸Ş¶ó ¼±ÅÃ ÇÊ¿ä"));
+		m_staticTargetCam.SetWindowText(_T("ì—°ê²°ëœ ì¹´ë©”ë¼ ì„ íƒ í•„ìš”"));
 		m_groupAdvSettings.EnableWindow(FALSE);
 		m_sliderFps.EnableWindow(FALSE); m_editFps.EnableWindow(FALSE); m_editFps.SetWindowText(_T(""));
 		m_sliderExposure.EnableWindow(FALSE); m_editExposure.EnableWindow(FALSE); m_editExposure.SetWindowText(_T(""));
@@ -318,10 +335,10 @@ void CCameraSettingsDlg::OnBnClickedOk()
 		if (pSerial) m_selectedSideSerial = *pSerial;
 	}
 
-	// Clean up allocated CString data for combo boxes
-	for (int i = 0; i < m_comboTop.GetCount(); ++i) delete (CString*)m_comboTop.GetItemDataPtr(i);
-	for (int i = 0; i < m_comboSide.GetCount(); ++i) delete (CString*)m_comboSide.GetItemDataPtr(i);
-
+	// [ìˆ˜ì •] ë©”ëª¨ë¦¬ ëˆ„ìˆ˜ ë°©ì§€ë¥¼ ìœ„í•´ CString ì •ë¦¬ ì½”ë“œë¥¼ ì—¬ê¸°ì—ì„œ ì œê±°í•˜ê³ 
+		// ì†Œë©¸ìë¡œ ì´ë™ì‹œí‚µë‹ˆë‹¤.
+		// for (int i = 0; i < m_comboTop.GetCount(); ++i) delete (CString*)m_comboTop.GetItemDataPtr(i);
+		// for (int i = 0; i < m_comboSide.GetCount(); ++i) delete (CString*)m_comboSide.GetItemDataPtr(i);
 
 	m_editServerIP.GetWindowText(m_strServerIP);
 	CString portStr;
@@ -384,34 +401,34 @@ void CCameraSettingsDlg::UpdateSliderRange(Pylon::CInstantCamera* pCam, const ch
 			CFloatParameter param(nodemap, paramName);
 			if (param.IsValid() && IsReadable(param)) {
 
-				// [¼öÁ¤] °¡¿ë ¹üÀ§ (Sane Max)¸¦ Á¤ÀÇÇÕ´Ï´Ù.
-				const double SANE_MAX_FPS = 500.0;      // ÃÖ´ë 500 FPS
-				const double SANE_MAX_EXPOSURE = 30000.0; // ÃÖ´ë 30ms (30000 us)
-				const double SANE_MAX_GAIN = 48.0;        // ÃÖ´ë 48 dB (PylonView ±âº»°ª ±ÙÃ³)
+				// [ìˆ˜ì •] ê°€ìš© ë²”ìœ„ (Sane Max)ë¥¼ ì •ì˜í•©ë‹ˆë‹¤.
+				const double SANE_MAX_FPS = 500.0;      // ìµœëŒ€ 500 FPS
+				const double SANE_MAX_EXPOSURE = 30000.0; // ìµœëŒ€ 30ms (30000 us)
+				const double SANE_MAX_GAIN = 48.0;        // ìµœëŒ€ 48 dB (PylonView ê¸°ë³¸ê°’ ê·¼ì²˜)
 
 				double minVal = param.GetMin();
-				double maxVal = param.GetMax(); // Ä«¸Ş¶óÀÇ ½ÇÁ¦ ÃÖ´ëÄ¡ (e.g., 500000)
+				double maxVal = param.GetMax(); // ì¹´ë©”ë¼ì˜ ì‹¤ì œ ìµœëŒ€ì¹˜ (e.g., 500000)
 				double curVal = param.GetValue();
 				CString sCurVal;
 
-				// [¼öÁ¤] ÆÄ¶ó¹ÌÅÍº°·Î ÃÖ´ë ¹üÀ§¸¦ °­Á¦ÇÏ°í, Çü½ÄÀ» ÁöÁ¤ÇÕ´Ï´Ù.
+				// [ìˆ˜ì •] íŒŒë¼ë¯¸í„°ë³„ë¡œ ìµœëŒ€ ë²”ìœ„ë¥¼ ê°•ì œí•˜ê³ , í˜•ì‹ì„ ì§€ì •í•©ë‹ˆë‹¤.
 				if (strcmp(paramName, "AcquisitionFrameRate") == 0) {
-					maxVal = min(maxVal, SANE_MAX_FPS); // °¡¿ë ¹üÀ§ Àû¿ë
-					curVal = min(curVal, maxVal); // ÇöÀç °ªµµ ÃÖ´ë°ª ÀÌ³»·Î °­Á¦
+					maxVal = min(maxVal, SANE_MAX_FPS); // ê°€ìš© ë²”ìœ„ ì ìš©
+					curVal = min(curVal, maxVal); // í˜„ì¬ ê°’ë„ ìµœëŒ€ê°’ ì´ë‚´ë¡œ ê°•ì œ
 					sCurVal.Format(_T("%.1f"), curVal);
 				}
 				else if (strcmp(paramName, "ExposureTime") == 0) {
-					maxVal = min(maxVal, SANE_MAX_EXPOSURE); // °¡¿ë ¹üÀ§ Àû¿ë
+					maxVal = min(maxVal, SANE_MAX_EXPOSURE); // ê°€ìš© ë²”ìœ„ ì ìš©
 					curVal = min(curVal, maxVal);
 					sCurVal.Format(_T("%.0f"), curVal);
 				}
 				else if (strcmp(paramName, "Gain") == 0) {
-					maxVal = min(maxVal, SANE_MAX_GAIN); // °¡¿ë ¹üÀ§ Àû¿ë
+					maxVal = min(maxVal, SANE_MAX_GAIN); // ê°€ìš© ë²”ìœ„ ì ìš©
 					curVal = min(curVal, maxVal);
 					sCurVal.Format(_T("%.1f"), curVal);
 				}
 				else {
-					// ´Ù¸¥ Float °ªÀÌ ÀÖ´Ù¸é ±âº» Çü½Ä »ç¿ë
+					// ë‹¤ë¥¸ Float ê°’ì´ ìˆë‹¤ë©´ ê¸°ë³¸ í˜•ì‹ ì‚¬ìš©
 					sCurVal.Format(_T("%.1f"), curVal);
 				}
 
@@ -423,7 +440,7 @@ void CCameraSettingsDlg::UpdateSliderRange(Pylon::CInstantCamera* pCam, const ch
 				slider.SetRange(sliderMin, sliderMax);
 
 				if (maxVal > minVal) { // Avoid division by zero
-					// [¼öÁ¤] °¡¿ë ¹üÀ§°¡ Àû¿ëµÈ curVal°ú maxValÀ» »ç¿ë
+					// [ìˆ˜ì •] ê°€ìš© ë²”ìœ„ê°€ ì ìš©ëœ curValê³¼ maxValì„ ì‚¬ìš©
 					int sliderPos = static_cast<int>(((curVal - minVal) / (maxVal - minVal)) * sliderMax);
 					slider.SetPos(sliderPos);
 				}
@@ -431,7 +448,7 @@ void CCameraSettingsDlg::UpdateSliderRange(Pylon::CInstantCamera* pCam, const ch
 					slider.SetPos(sliderMin);
 				}
 
-				edit.SetWindowText(sCurVal); // [¼öÁ¤] °¡¿ë ¹üÀ§°¡ Àû¿ëµÈ ÇöÀç °ªÀ¸·Î ¼³Á¤
+				edit.SetWindowText(sCurVal); // [ìˆ˜ì •] ê°€ìš© ë²”ìœ„ê°€ ì ìš©ëœ í˜„ì¬ ê°’ìœ¼ë¡œ ì„¤ì •
 			}
 		}
 		else if constexpr (std::is_same_v<TParam, int64_t> || std::is_same_v<TParam, int>) {
