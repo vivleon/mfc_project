@@ -10,6 +10,9 @@
 #include <shlobj.h> 
 #pragma comment(lib, "shell32.lib") // for SHCreateDirectoryEx
 
+// [NEW] GetHistoryFilePath 헬퍼에 필요
+#include <shlwapi.h> // for PathRemoveFileSpec
+
 // JSON
 #include <nlohmann/json.hpp>
 using json = nlohmann::json;
@@ -33,7 +36,8 @@ using namespace cv;
 #include <gdiplus.h>
 // GDI+ Token은 CanClientDlg 멤버(m_gdiplusToken)로 이동
 
-#define WM_CAPTURE_COMPLETE (WM_USER + 100)
+// [FIX] 사용되지 않는 WM_CAPTURE_COMPLETE (WM_USER + 100) 정의 삭제
+// #define WM_CAPTURE_COMPLETE (WM_USER + 100) 
 
 // [신규] 리소스 ID (resource.h에서 가져옴)
 #define IDC_BTN_EXPORT_HISTORY 1039
@@ -66,6 +70,15 @@ BEGIN_MESSAGE_MAP(CCanClientDlg, CDialogEx)
     ON_WM_CTLCOLOR()
     ON_BN_CLICKED(IDC_BTN_EXPORT_HISTORY, &CCanClientDlg::OnBnClickedBtnExportHistory) // [수정] ID 1039
     ON_BN_CLICKED(IDC_CHECK_MOTION, &CCanClientDlg::OnBnClickedCheckMotion) // [FIX] 무한 루프 수정
+
+    // [FIX] OnCaptureComplete 핸들러 연결 추가 (핵심 수정)
+    ON_MESSAGE(WM_APP_CAPTURE_COMPLETE, &CCanClientDlg::OnCaptureComplete)
+
+    // ========================================================================
+    // [NEW] 더블클릭 이벤트 핸들러 연결 (핵심 수정)
+    // ========================================================================
+    ON_NOTIFY(NM_DBLCLK, IDC_LIST_HISTORY, &CCanClientDlg::OnDblclkListHistory)
+
 END_MESSAGE_MAP()
 
 // --- Constructor ---
@@ -565,7 +578,7 @@ UINT CCanClientDlg::CaptureWorkThread(LPVOID pParam)
 }
 
 // ========================================================================
-// [FIX] ProcessCapture 수정 (ThreadEnd:에서 SetTimer 제거)
+// [FIX] ProcessCapture 수정 (ThreadEnd:에서 SetTimer 제거 및 PostMessage ID 수정)
 // ========================================================================
 void CCanClientDlg::ProcessCapture(bool bUseTop, bool bUseSide)
 {
@@ -634,13 +647,15 @@ void CCanClientDlg::ProcessCapture(bool bUseTop, bool bUseSide)
         // --- 3. Process Result (Based on TOP Response) ---
         if (ParseJsonResponse(topResponse, *pResult)) {
             // 파싱 성공 (e.g., {"result":"정상"} or {"result":"에러",...})
-            if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 1, (LPARAM)pResult);
+            // [FIX] 올바른 메시지 ID (WM_APP_CAPTURE_COMPLETE) 사용
+            if (GetSafeHwnd()) PostMessage(WM_APP_CAPTURE_COMPLETE, 1, (LPARAM)pResult);
         }
         else {
             // 파싱 실패 (e.g., "서버 응답 없음" or "<html>...</html>")
             char* pStr = new char[topResponse.length() + 1];
             strcpy_s(pStr, topResponse.length() + 1, topResponse.c_str());
-            if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, (WPARAM)pStr, (LPARAM)pResult);
+            // [FIX] 올바른 메시지 ID (WM_APP_CAPTURE_COMPLETE) 사용
+            if (GetSafeHwnd()) PostMessage(WM_APP_CAPTURE_COMPLETE, (WPARAM)pStr, (LPARAM)pResult);
         }
         goto ThreadEnd; // 정상 종료
     }
@@ -653,7 +668,8 @@ CaptureFail_Network:
         // [NEW] 서버 전송/연결 실패
         pResult->defectType = _T("전송실패");
         pResult->defectDetail = _T("서버 연결/전송 실패");
-        if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 0, (LPARAM)pResult);
+        // [FIX] 올바른 메시지 ID (WM_APP_CAPTURE_COMPLETE) 사용
+        if (GetSafeHwnd()) PostMessage(WM_APP_CAPTURE_COMPLETE, 0, (LPARAM)pResult);
         goto ThreadEnd;
     }
 CaptureFail_Grab:
@@ -661,19 +677,23 @@ CaptureFail_Grab:
         // [수정] 카메라 Grab 실패
         pResult->defectType = _T("CAPTURE_FAIL");
         pResult->defectDetail = _T("카메라 Grab 실패");
-        if (GetSafeHwnd()) PostMessage(WM_CAPTURE_COMPLETE, 0, (LPARAM)pResult);
+        // [FIX] 올바른 메시지 ID (WM_APP_CAPTURE_COMPLETE) 사용
+        if (GetSafeHwnd()) PostMessage(WM_APP_CAPTURE_COMPLETE, 0, (LPARAM)pResult);
     }
 
 ThreadEnd:
     // [FIX] 작업 스레드에서 SetTimer 호출 제거 (UI 먹통 원인)
     // if (GetSafeHwnd() && ::IsWindow(GetSafeHwnd())) {
-    //     m_timerId = SetTimer(1, 100, nullptr);
+    //      m_timerId = SetTimer(1, 100, nullptr);
     // }
     return; // 스레드 종료
 }
 
 
 // --- Network Functions ---
+// ========================================================================
+// [MODIFIED] SendImageToServer (파싱 오류 수정)
+// ========================================================================
 bool CCanClientDlg::SendImageToServer(const std::vector<unsigned char>& imgBuffer, CString role, std::string& response)
 {
     AddLog(L"[DEBUG] SendImageToServer 시작. Role: " + role);
@@ -709,14 +729,27 @@ bool CCanClientDlg::SendImageToServer(const std::vector<unsigned char>& imgBuffe
     AddLog(logMsg);
 
     char recvBuf[4096] = { 0 }; int recvLen = recv(sock, recvBuf, sizeof(recvBuf) - 1, 0);
-    if (recvLen > 0) { recvBuf[recvLen] = '\0'; response = std::string(recvBuf); AddLog(L"[INFO] 서버 응답 수신: " + Utf8ToCStr(response)); }
-    else { response.clear(); AddLog(L"[WARNING] 서버 응답 없음"); }
 
-    closesocket(sock);
-    return true;
+    // [MODIFIED] recv()가 0바이트(연결 종료) 또는 오류(-1)를 반환하면
+    // false를 반환하여 "파싱 오류" 대신 "전송 실패"로 처리되도록 수정
+    if (recvLen > 0) {
+        recvBuf[recvLen] = '\0';
+        response = std::string(recvBuf);
+        AddLog(L"[INFO] 서버 응답 수신: " + Utf8ToCStr(response));
+        closesocket(sock);
+        return true;
+    }
+    else {
+        response.clear();
+        AddLog(L"[WARNING] 서버 응답 없음 (recvLen <= 0)");
+        closesocket(sock);
+        return false; // <-- 핵심 수정
+    }
 }
 
-// [NEW] 로컬 이미지 저장 헬퍼 함수
+// ========================================================================
+// [MODIFIED] 로컬 이미지 저장 헬퍼 (폴더 분리)
+// ========================================================================
 void CCanClientDlg::SaveImageLocally(const cv::Mat& frame, CString role, CString productId)
 {
     if (frame.empty() || productId.IsEmpty()) return;
@@ -724,14 +757,16 @@ void CCanClientDlg::SaveImageLocally(const cv::Mat& frame, CString role, CString
     try
     {
         CString folderPath;
-        // [수정] 사용자가 더블클릭 시 미리보기를 제공하는 경로와 일치시킴
-        folderPath = _T("C:\\InspectionImages\\");
+        // [MODIFIED] role(TOP/SIDE)에 따라 하위 폴더 경로 생성
+        folderPath.Format(_T("C:\\InspectionImages\\%s\\"), (LPCTSTR)role);
 
         // CString/Windows API를 사용하여 폴더 생성 (재귀적으로 생성)
+        // (예: C:\InspectionImages\TOP\ 폴더가 없으면 자동으로 만듦)
         SHCreateDirectoryEx(NULL, folderPath, NULL);
 
         CString fileName;
         fileName.Format(_T("%s_%s.jpg"), (LPCTSTR)productId, (LPCTSTR)role);
+        // [MODIFIED] (예: C:\InspectionImages\TOP\CK1012_TOP.jpg)
         CString filePath = folderPath + fileName;
 
         // cv::imwrite는 CString을 직접 지원하지 않으므로 std::string으로 변환
@@ -757,7 +792,9 @@ void CCanClientDlg::SaveImageLocally(const cv::Mat& frame, CString role, CString
 }
 
 
-// [MODIFIED] Local Image Preview Logic
+// ========================================================================
+// [MODIFIED] 로컬 이미지 미리보기 (폴더 분리)
+// ========================================================================
 void CCanClientDlg::OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult)
 {
     LPNMITEMACTIVATE pNMItemActivate = reinterpret_cast<LPNMITEMACTIVATE>(pNMHDR);
@@ -766,24 +803,33 @@ void CCanClientDlg::OnDblclkListHistory(NMHDR* pNMHDR, LRESULT* pResult)
         CString productID = m_historyList.GetItemText(pNMItemActivate->iItem, 0);
         AddLog(L"[UI] 이력 더블클릭: " + productID);
 
-        // [수정] SaveImageLocally에서 사용하는 경로와 일치시킴
-        CString imgFolderPath = _T("C:\\InspectionImages\\");
+        // [MODIFIED] SaveImageLocally에서 사용하는 분리된 폴더 경로와 일치시킴
+        CString baseFolderPath = _T("C:\\InspectionImages\\");
         CString pathTop, pathSide;
-        pathTop.Format(_T("%s%s_TOP.jpg"), (LPCTSTR)imgFolderPath, (LPCTSTR)productID);
-        pathSide.Format(_T("%s%s_SIDE.jpg"), (LPCTSTR)imgFolderPath, (LPCTSTR)productID);
+        pathTop.Format(_T("%sTOP\\%s_TOP.jpg"), (LPCTSTR)baseFolderPath, (LPCTSTR)productID);
+        pathSide.Format(_T("%sSIDE\\%s_SIDE.jpg"), (LPCTSTR)baseFolderPath, (LPCTSTR)productID);
 
         CFileStatus status;
         bool bGotTop = CFile::GetStatus(pathTop, status);
         bool bGotSide = CFile::GetStatus(pathSide, status);
 
         if (bGotTop || bGotSide) {
+            // CPreviewDlg (IDD_PREVIEW_DLG)를 생성합니다.
             CPreviewDlg dlg(this);
+
+            // [INFO] SetImagePaths가 CPreviewDlg 내부에서
+            // bGotTop ? pathTop : "" 이미지를 -> IDC_IMG_LEFT 에
+            // bGotSide ? pathSide : "" 이미지를 -> IDC_IMG_RIGHT 에
+            // 로드하도록 약속되어 있습니다. (이 함수는 PreviewDlg.cpp에 구현되어 있음)
             dlg.SetImagePaths(bGotTop ? pathTop : _T(""), bGotSide ? pathSide : _T(""));
+
+            // 다이얼로그를 모달(Modal)로 띄웁니다.
             dlg.DoModal();
         }
         else {
             AddLog(L"[ERROR] 로컬에서 이미지를 찾을 수 없습니다: " + pathTop + L" or " + pathSide);
-            AfxMessageBox(L"로컬(C:\\InspectionImages\\)에서 해당 이미지를 찾을 수 없습니다.");
+            // [MODIFIED] 오류 메시지 경로 수정
+            AfxMessageBox(L"로컬(C:\\InspectionImages\\TOP 또는 SIDE)에서 해당 이미지를 찾을 수 없습니다.");
         }
     }
 }
@@ -894,6 +940,21 @@ CString CCanClientDlg::GetCurrentTimestamp()
 {
     return CTime::GetCurrentTime().Format(_T("%Y-%m-%d %H:%M:%S"));
 }
+
+// [NEW] 히스토리 파일 경로를 동적으로 (EXE 파일 기준) 가져오는 헬퍼 함수
+CString CCanClientDlg::GetHistoryFilePath()
+{
+    TCHAR szPath[MAX_PATH];
+    // CanClient.exe 파일의 전체 경로를 가져옴
+    GetModuleFileName(NULL, szPath, MAX_PATH);
+    // ".exe" 파일명 부분을 제거하고 폴더 경로만 남김
+    PathRemoveFileSpec(szPath);
+
+    CString sPath(szPath);
+    sPath += _T("\\history.txt"); // "실행폴더\history.txt"
+    return sPath;
+}
+
 // --- Settings & History File I/O ---
 void CCanClientDlg::AddToHistory(const InspectionResult& result)
 {
@@ -914,8 +975,11 @@ void CCanClientDlg::AddToHistory(const InspectionResult& result)
 
 void CCanClientDlg::SaveHistoryToFile()
 {
-    CString folder = _T("C:\\CanClient"); CreateDirectory(folder, NULL);
-    CString filePath = folder + _T("\\history.txt");
+    // [FIX] 하드코딩된 경로 대신 동적 경로 헬퍼 함수 사용
+    // CString folder = _T("C:\\CanClient"); CreateDirectory(folder, NULL);
+    // CString filePath = folder + _T("\\history.txt");
+    CString filePath = GetHistoryFilePath();
+
     CStdioFile file;
     // [수정] CSV 호환을 위해 덮어쓰기 (UTF-16 LE BOM)
     if (!file.Open(filePath, CFile::modeCreate | CFile::modeWrite | CFile::typeText)) {
@@ -941,45 +1005,53 @@ void CCanClientDlg::SaveHistoryToFile()
     file.Close();
 }
 
+// ========================================================================
+// [MODIFIED] LoadHistoryFromFile (BOM 버그 수정)
+// ========================================================================
 void CCanClientDlg::LoadHistoryFromFile()
 {
     if (!m_historyList.GetSafeHwnd()) { AddLog(L"[ERROR] LoadHistoryFromFile: List control 핸들 오류."); return; }
     m_historyList.DeleteAllItems();
     m_history.clear();
 
-    CString filePath = _T("C:\\CanClient\\history.txt");
+    // [FIX] 하드코딩된 경로 대신 동적 경로 헬퍼 함수 사용
+    CString filePath = GetHistoryFilePath();
+
     CStdioFile file;
     // [수정] CStdioFile은 BOM을 자동 처리 (읽기 모드)
-    if (!file.Open(filePath, CFile::modeRead | CFile::typeText | CFile::shareDenyWrite)) { AddLog(L"[WARNING] 히스토리 파일 읽기 실패: " + filePath); return; }
+    if (!file.Open(filePath, CFile::modeRead | CFile::typeText | CFile::shareDenyWrite)) {
+        // [FIX] 로그 메시지에 올바른(동적) 경로가 표시됨
+        AddLog(L"[WARNING] 히스토리 파일 읽기 실패: " + filePath);
+        return;
+    }
 
     CString line;
     long maxId = 1011;
 
-    // [수정] BOM 건너뛰기 (첫 줄 읽기)
-    if (file.ReadString(line))
+    // [MODIFIED] BOM(ÿ) 버그를 수정하는 새 로직
+    bool bIsFirstLine = true;
+    while (file.ReadString(line))
     {
-        if (line.GetLength() > 0 && line[0] != 0xFEFF) {
-            file.SeekToBegin(); // BOM이 아니면 다시 처음으로
+        if (bIsFirstLine)
+        {
+            bIsFirstLine = false;
+            // CStdioFile이 BOM(0xFEFF)을 자동으로 처리하지 않고
+            // 텍스트(ÿ)로 읽어오는 경우를 수동으로 처리합니다.
+            if (line.GetLength() > 0 && line[0] == 0xFEFF)
+            {
+                line = line.Mid(1); // 첫 번째 BOM 문자 제거
+            }
         }
-        // BOM(이거나 첫 줄)은 읽었으므로, 다음 줄부터 파싱하거나 (BOM이 아니었다면) 첫 줄부터 파싱
-        if (line[0] == 0xFEFF) {
-            // BOM이었으면 이 라인은 비우고 다음 루프부터
-        }
-        else {
-            // BOM이 아니었으면 이 라인부터 파싱
-            ProcessHistoryLine(line, maxId);
-        }
-    }
 
-    // [수정] CSV 호환을 위해 | 대신 ,로 파싱
-    while (file.ReadString(line)) {
+        // BOM이 제거된 깨끗한 라인을 파서로 전달
         ProcessHistoryLine(line, maxId);
     }
+
     m_productCounter = maxId;
     file.Close();
     UpdateStatistics();
     if (m_historyList.GetItemCount() > 0) m_historyList.EnsureVisible(m_historyList.GetItemCount() - 1, FALSE);
-    AddLog(L"[INFO] 히스토리 로드 완료.");
+    AddLog(L"[INFO] 히스토리 로드 완료: " + filePath); // [FIX] 로그에 올바른 경로 표시
 }
 
 // ========================================================================
@@ -1207,7 +1279,7 @@ bool CCanClientDlg::SetPylonFloatValue(CInstantCamera& cam, const char* paramNam
             double maxVal = param.GetMax();
             double clampedValue = max(minVal, min(maxVal, value)); // Clamp value to valid range
             param.SetValue(clampedValue);
-            CString msg; msg.Format(L"   - %hs 설정: %.2f (범위: %.2f-%.2f)", paramName, clampedValue, minVal, maxVal); AddLog(msg);
+            CString msg; msg.Format(L"    - %hs 설정: %.2f (범위: %.2f-%.2f)", paramName, clampedValue, minVal, maxVal); AddLog(msg);
             return true;
         }
         else { CString msg; msg.Format(L"[WARNING] 파라미터 '%hs'를 쓰거나 찾을 수 없음.", paramName); AddLog(msg); }
@@ -1323,11 +1395,11 @@ void CCanClientDlg::OnBnClickedBtnExportHistory()
     // 1. 파일 저장 대화상자 띄우기
     CString strFilter = _T("CSV 파일 (*.csv)|*.csv|모든 파일 (*.*)|*.*||");
     CFileDialog dlg(FALSE, // FALSE = 저장
-        _T("csv"),        // 기본 확장자
+        _T("csv"),       // 기본 확장자
         _T("history_export.csv"), // 기본 파일명
         OFN_HIDEREADONLY | OFN_OVERWRITEPROMPT, // 속성
-        strFilter,        // 필터
-        this);            // 부모 윈도우
+        strFilter,       // 필터
+        this);           // 부모 윈도우
 
     if (dlg.DoModal() != IDOK)
     {

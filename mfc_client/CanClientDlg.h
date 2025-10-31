@@ -1,6 +1,4 @@
-﻿// CanClientDlg.h
-
-#pragma once
+﻿#pragma once
 #include <vector>
 #include <string>
 #include <map>
@@ -10,11 +8,12 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib") // Ensure linker dependency
+#pragma comment(lib, "shlwapi.lib")
 
 #include <pylon/PylonIncludes.h>
 #include <opencv2/opencv.hpp>
 #include "CameraSettingsDlg.h"
-#include "PreviewDlg.h"       // For Preview Dialog
+#include "PreviewDlg.h"      // For Preview Dialog
 #include "CanClient.h" // [FIX] CanClient.h 추가
 
 // [NEW] GDI+ for modern UI and image preview
@@ -23,6 +22,8 @@
 
 
 #define WM_APP_POSTINIT (WM_APP + 1)
+// [FIX] 워커 스레드 -> UI 스레드로 보낼 사용자 정의 메시지 (ID 충돌 수정)
+#define WM_APP_CAPTURE_COMPLETE (WM_APP + 2) // <-- (WM_APP + 1)에서 (WM_APP + 2)로 수정됨
 
 using namespace Pylon;
 
@@ -44,6 +45,10 @@ struct CaptureThreadParams
     bool bUseTop;
     bool bUseSide;
 };
+
+// [FIX] 사용되지 않는 'CaptureResult' 구조체 제거
+// (프로젝트가 'InspectionResult'를 사용하므로 혼동을 막기 위해 삭제)
+
 
 // --- Main Dialog Class ---
 class CCanClientDlg : public CDialogEx
@@ -135,6 +140,9 @@ private:
     // [FIX] CSV 파싱 헬퍼 선언 추가 (컴파일 오류 수정)
     void ProcessHistoryLine(CString line, long& maxId);
 
+    // [NEW] 히스토리 파일 경로 헬퍼 선언 추가
+    CString GetHistoryFilePath();
+
     CString GenerateProductId();
     CString GetCurrentTimestamp();
     bool ParseJsonResponse(const std::string& jsonStr, InspectionResult& result);
@@ -149,9 +157,9 @@ private:
     // [FIX] 설정 변수들을 App 클래스에서 접근할 수 있도록 Public으로 이동
 public:
     CString m_strServerIP;
-    int     m_nUploadPort;   // [FIX] 특수 문자(0xa0) 제거
-    int     m_nRequestPort;  // [FIX] 특수 문자(0xa0) 제거
-    CString m_topCamSerial;  // [FIX] 중복 선언 제거 (여기에만 둠)
+    int     m_nUploadPort;    // [FIX] 특수 문자(0xa0) 제거
+    int     m_nRequestPort;   // [FIX] 특수 문자(0xa0) 제거
+    CString m_topCamSerial;   // [FIX] 중복 선언 제거 (여기에만 둠)
     CString m_sideCamSerial; // [FIX] 중복 선언 제거
 
     // --- Advanced Camera Settings Storage ---

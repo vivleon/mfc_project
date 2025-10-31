@@ -32,7 +32,9 @@ void CPreviewDlg::SetImagePaths(CString strPathTop, CString strPathSide)
     m_strPathSide = strPathSide;
 }
 
-// [NEW] Load images from file paths
+// ========================================================================
+// [MODIFIED] LoadImageFromFile (멈춤 현상 수정)
+// ========================================================================
 void CPreviewDlg::LoadImageFromFile(CString sPath, Gdiplus::Image** ppImage)
 {
     if (sPath.IsEmpty()) return;
@@ -44,41 +46,46 @@ void CPreviewDlg::LoadImageFromFile(CString sPath, Gdiplus::Image** ppImage)
         *ppImage = nullptr;
     }
 
-    // Load new image
-    *ppImage = Gdiplus::Image::FromFile(sPath);
-    if ((*ppImage)->GetLastStatus() != Gdiplus::Ok)
+    // [MODIFIED] CT2A(sPath)는 Unicode 빌드에서 CString(wchar_t*)을 
+    // char*로 잘못 변환합니다. GDI+ FromFile은 wchar_t*를
+    // 직접 받으므로 CString을 그대로 전달해야 합니다.
+    *ppImage = Gdiplus::Image::FromFile(sPath); // <-- CT2A 래퍼 제거
+
+    // Check for failure
+    if (!*ppImage || (*ppImage)->GetLastStatus() != Gdiplus::Ok)
     {
-        AfxMessageBox(L"이미지 로드 실패: " + sPath);
-        delete* ppImage;
+        AfxTrace(L"GDI+ 이미지 로드 실패: %s", sPath);
+        if (*ppImage) delete* ppImage;
         *ppImage = nullptr;
     }
 }
+
 
 void CPreviewDlg::DoDataExchange(CDataExchange* pDX)
 {
     CDialogEx::DoDataExchange(pDX);
 }
 
+// [NEW] Load images on initialization
 BOOL CPreviewDlg::OnInitDialog()
 {
     CDialogEx::OnInitDialog();
 
-    // Load images
+    // [NEW] Load images
     LoadImageFromFile(m_strPathTop, &m_imgTop);
     LoadImageFromFile(m_strPathSide, &m_imgSide);
 
-    // [NEW] Set dark background for preview
-    // We will do this in OnPaint to prevent flicker
-    this->ModifyStyle(0, WS_CLIPCHILDREN);
-
-    return TRUE;
+    return TRUE;  // return TRUE  unless you set the focus to a control
 }
 
 BEGIN_MESSAGE_MAP(CPreviewDlg, CDialogEx)
     ON_WM_PAINT()
 END_MESSAGE_MAP()
 
-// [NEW] Draw images on paint
+
+// CPreviewDlg message handlers
+
+// [NEW] OnPaint for drawing
 void CPreviewDlg::OnPaint()
 {
     CPaintDC dc(this); // device context for painting
@@ -87,8 +94,8 @@ void CPreviewDlg::OnPaint()
     CRect rcClient;
     GetClientRect(&rcClient);
     CBrush brBkg;
-    brBkg.CreateSolidBrush(RGB(30, 30, 30)); // Dark background
-    dc.FillRect(&rcClient, &brBkg);
+    //brBkg.CreateSolidBrush(RGB(30, 30, 30)); // Dark background
+    dc.FillRect(rcClient, CBrush::FromHandle(GetSysColorBrush(COLOR_BTNFACE)));
     brBkg.DeleteObject();
 
     // Draw images
@@ -106,7 +113,7 @@ void CPreviewDlg::DrawImageToCtrl(Gdiplus::Image* pImage, UINT nCtrlID)
     pWnd->GetClientRect(&rc);
 
     // Fill background first
-    dc.FillSolidRect(rc, RGB(0, 0, 0)); // Black background for image boxes
+    dc.FillRect(rc, CBrush::FromHandle(GetSysColorBrush(COLOR_BTNFACE)));
 
     if (!pImage) return; // No image to draw
 
@@ -119,18 +126,20 @@ void CPreviewDlg::DrawImageToCtrl(Gdiplus::Image* pImage, UINT nCtrlID)
     REAL dstAR = (REAL)rc.Width() / rc.Height();
 
     if (srcAR > dstAR) {
+        // Source is wider than destination
         rcDraw.Width = (REAL)rc.Width();
         rcDraw.Height = rc.Width() / srcAR;
         rcDraw.X = 0;
         rcDraw.Y = (rc.Height() - rcDraw.Height) / 2;
     }
     else {
+        // Source is taller than destination
         rcDraw.Height = (REAL)rc.Height();
         rcDraw.Width = rc.Height() * srcAR;
-        rcDraw.X = (rc.Width() - rcDraw.Width) / 2;
         rcDraw.Y = 0;
+        rcDraw.X = (rc.Width() - rcDraw.Width) / 2;
     }
 
+    // Draw the image
     graphics.DrawImage(pImage, rcDraw, 0, 0, (REAL)pImage->GetWidth(), (REAL)pImage->GetHeight(), UnitPixel);
 }
-
